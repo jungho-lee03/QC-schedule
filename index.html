@@ -572,7 +572,7 @@
     padding:5px 8px; font-size:11px; cursor:pointer; color:var(--ink);
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   }
-  .site-suggest-item:hover{ background:var(--paper); }
+  .site-suggest-item:hover, .site-suggest-item.active{ background:var(--paper); }
 
   .legend{ display:flex; flex-wrap:wrap; gap:14px; padding:14px 32px 22px; font-size:12px; color:var(--muted); border-top:0.5px solid var(--line); }
   .legend .item{ display:flex; align-items:center; gap:6px; }
@@ -845,6 +845,14 @@
       </div>
       <span class="matrix-status" id="matrix-status"></span>
       <div class="matrix-filter" id="matrix-filter"></div>
+      <div class="site-sort-wrap">
+        <label for="matrix-sort-select" style="font-size:11px; color:var(--muted);">정렬</label>
+        <select class="site-sort-select" id="matrix-sort-select">
+          <option value="default">등록순</option>
+          <option value="name">현장명순</option>
+          <option value="due">준공예정일순</option>
+        </select>
+      </div>
       <button type="button" class="matrix-refresh-btn" id="matrix-refresh-btn">↻ 새로고침</button>
       <button type="button" class="matrix-refresh-btn" id="matrix-print-btn">인쇄(건축·인프라 각 1장)</button>
     </div>
@@ -936,7 +944,7 @@
       <button type="button" id="carry-cal-next" class="jump-cal-nav">▶</button>
     </div>
     <div class="leave-cal-grid" id="carry-cal-grid"></div>
-    <div class="leave-cal-hint">날짜를 클릭하면 이 일정과 똑같은 카드가 그 날짜(그 달)에 그대로 생성됩니다. 원래 일정은 지워지지 않습니다.</div>
+    <div class="leave-cal-hint">날짜를 클릭하면 이 일정이 그 날짜(그 달)로 옮겨집니다. 원래 자리의 일정은 삭제됩니다.</div>
   </div>
 </div>
 
@@ -1534,7 +1542,13 @@ function applyStatePayload(data){
 }
 function isUserEditing(){
   const ae = document.activeElement;
-  return !!(ae && ae.isContentEditable);
+  if(ae && ae.isContentEditable) return true;
+  // <input>/<textarea>(현장명 자동완성 등)는 isContentEditable이 아니라서 빠져있던 부분 —
+  // 이것 때문에 입력 중에 실시간 동기화가 화면을 통째로 다시 그려서 드롭다운/입력이 사라지는 문제가 있었다.
+  if(ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) return true;
+  // 자동완성 드롭다운이 열려 있는 동안에도(포커스가 잠깐 벗어나도) 편집 중으로 간주한다.
+  if(document.querySelector('.site-suggest')) return true;
+  return false;
 }
 function saveState(){
   if(!dbRef) return;
@@ -1843,8 +1857,23 @@ function updateSiteDatalist(){
 // 브라우저별로 동작이 들쑥날쑥한 네이티브 <input list> 대신, 클릭하면 항상 열리는 자체 자동완성 드롭박스
 function attachSiteAutocomplete(inputEl, seg){
   let dropdownEl = null;
+  let items = [];
+  let activeIdx = -1;
   function closeDropdown(){
     if(dropdownEl){ dropdownEl.remove(); dropdownEl = null; }
+    items = [];
+    activeIdx = -1;
+  }
+  function highlight(idx){
+    activeIdx = idx;
+    items.forEach((el,i)=> el.classList.toggle('active', i === idx));
+    if(idx >= 0 && items[idx] && items[idx].scrollIntoView) items[idx].scrollIntoView({ block:'nearest' });
+  }
+  function selectName(name){
+    inputEl.value = name;
+    seg.ids.forEach(id=>{ const ev=EVENTS.find(x=>x.id===id); if(ev) ev.site = name; });
+    scheduleSave();
+    closeDropdown();
   }
   function openDropdown(filterByCurrentText){
     closeDropdown();
@@ -1856,24 +1885,29 @@ function attachSiteAutocomplete(inputEl, seg){
     if(!matches.length) return;
     dropdownEl = document.createElement('div');
     dropdownEl.className = 'site-suggest';
-    matches.forEach(name=>{
+    items = matches.map(function(name){
       const item = document.createElement('div');
       item.className = 'site-suggest-item';
       item.textContent = name;
-      item.addEventListener('mousedown', (e)=>{
-        e.preventDefault();
-        inputEl.value = name;
-        seg.ids.forEach(id=>{ const ev=EVENTS.find(x=>x.id===id); if(ev) ev.site = name; });
-        scheduleSave();
-        closeDropdown();
-      });
+      // mousedown에서 처리해야 input의 blur보다 먼저 실행되어 클릭이 확실히 반영된다.
+      item.addEventListener('mousedown', (e)=>{ e.preventDefault(); selectName(name); });
       dropdownEl.appendChild(item);
+      return item;
     });
     inputEl.parentElement.appendChild(dropdownEl);
   }
   inputEl.addEventListener('focus', ()=> openDropdown(false));
   inputEl.addEventListener('click', (e)=>{ e.stopPropagation(); openDropdown(false); });
   inputEl.addEventListener('input', ()=> openDropdown(true));
+  // 키보드로 목록을 내려가며(↓/↑) 고른 뒤 Enter로 선택, Esc로 닫기 — 마우스로 클릭할 시간이
+  // 부족하다는 피드백에 따라, 목록은 클릭/입력/포커스 이탈 외에는 스스로 사라지지 않는다.
+  inputEl.addEventListener('keydown', (e)=>{
+    if(!items.length) return;
+    if(e.key === 'ArrowDown'){ e.preventDefault(); highlight(activeIdx < items.length-1 ? activeIdx+1 : 0); }
+    else if(e.key === 'ArrowUp'){ e.preventDefault(); highlight(activeIdx > 0 ? activeIdx-1 : items.length-1); }
+    else if(e.key === 'Enter'){ if(activeIdx >= 0){ e.preventDefault(); selectName(items[activeIdx].textContent); } }
+    else if(e.key === 'Escape'){ closeDropdown(); }
+  });
   inputEl.addEventListener('blur', ()=> setTimeout(closeDropdown, 150));
 }
 function openSiteModal(){
@@ -2153,8 +2187,12 @@ function sendEventToTargetMonth(dateStr){
     data.updatedAt = Date.now();
     return fb.set(data);
   }).then(function(){
+    // 대상 달 저장이 확실히 성공한 뒤에만 원본을 지운다 — 반대 순서로 하면 대상 달 저장이
+    // 실패했을 때 일정이 통째로 사라져버릴 수 있다.
+    removeIds([sample.id]);
+    renderAndSave();
     closeCarryModal();
-    alert(dateStr + ' (' + targetYear + '년 ' + targetMonth + '월)로 이 일정을 보냈습니다. 그 달 일정표에서 확인하실 수 있습니다.');
+    alert(dateStr + ' (' + targetYear + '년 ' + targetMonth + '월)로 이 일정을 옮겼습니다. 그 달 일정표에서 확인하실 수 있습니다.');
   }).catch(function(err){
     console.error('일정 다른 달로 보내기 실패:', err);
     alert('전송에 실패했습니다. 네트워크 상태를 확인하고 다시 시도해주세요.' + (err && err.message ? ('\n(' + err.message + ')') : ''));
@@ -2303,6 +2341,30 @@ function removeBuildingComprehensiveClassIfPresent(){
 let matrixDataCache = null;
 let matrixLoading = false;
 let matrixFilter = null; // null이면 전체 표시, Set이면 그 안에 있는 group만 표시
+// 현장별 점검 현황 표의 행 정렬 방식 — 등록순(기본) / 현장명순 / 준공예정일순. 브라우저에 기억해둔다.
+const MATRIX_SORT_LOCAL_KEY = 'qsched-matrix-sort';
+let matrixSortMode = 'default';
+try{ matrixSortMode = localStorage.getItem(MATRIX_SORT_LOCAL_KEY) || 'default'; }catch(e){}
+function setMatrixSortMode(mode){
+  matrixSortMode = mode;
+  try{ localStorage.setItem(MATRIX_SORT_LOCAL_KEY, mode); }catch(e){}
+  renderSiteMatrix();
+}
+function sortSiteEntries(entries){
+  if(matrixSortMode === 'name'){
+    return entries.slice().sort(function(a,b){ return (a.site.name || '').localeCompare(b.site.name || '', 'ko'); });
+  }
+  if(matrixSortMode === 'due'){
+    return entries.slice().sort(function(a,b){
+      const da = (a.site.due || '').trim(), db = (b.site.due || '').trim();
+      if(!da && !db) return 0;
+      if(!da) return 1; // 준공예정일 미입력 현장은 뒤로
+      if(!db) return -1;
+      return da.localeCompare(db);
+    });
+  }
+  return entries; // 'default' — 등록순, 원래 배열 그대로
+}
 let matrixPeriodMode = 'all'; // 'all' | 'year' | 'custom'
 let matrixCustomStart = null, matrixCustomEnd = null; // 'YYYY-MM-DD'
 let matrixListeners = {}; // stateKey -> { ref, fn } — 매트릭스가 열려 있는 동안 실시간으로 반영되도록 구독해둔다.
@@ -2887,8 +2949,10 @@ function renderSiteMatrix(){
     if(s.category === '인프라') infraEntries.push({ site:s, idx:idx });
     else archEntries.push({ site:s, idx:idx });
   });
-  renderMatrixSection('matrix-table-arch', MATRIX_COLUMNS_ARCH, archEntries);
-  renderMatrixSection('matrix-table-infra', MATRIX_COLUMNS_INFRA, infraEntries);
+  renderMatrixSection('matrix-table-arch', MATRIX_COLUMNS_ARCH, sortSiteEntries(archEntries));
+  renderMatrixSection('matrix-table-infra', MATRIX_COLUMNS_INFRA, sortSiteEntries(infraEntries));
+  const sortSelectEl = document.getElementById('matrix-sort-select');
+  if(sortSelectEl && sortSelectEl.value !== matrixSortMode) sortSelectEl.value = matrixSortMode;
   const statusEl = document.getElementById('matrix-status');
   if(statusEl) statusEl.textContent = matrixLoading ? '불러오는 중…' : (matrixStatusLabel() + ' · ' + new Date().toLocaleTimeString('ko-KR') + ' 갱신(실시간)');
 }
@@ -3277,7 +3341,7 @@ function buildEventEl(seg){
     const carryLink = document.createElement('div');
     carryLink.className = 'carry-link';
     carryLink.textContent = '▸ 다음달로 보내기';
-    carryLink.title = '이 일정을 그대로 다른 달로 보냅니다 (원본은 유지)';
+    carryLink.title = '이 일정을 다른 달로 옮깁니다 (원본은 삭제됨)';
     carryLink.draggable = false;
     carryLink.addEventListener('mousedown', (ev)=>{ ev.stopPropagation(); });
     carryLink.addEventListener('dragstart', (ev)=>{ ev.preventDefault(); ev.stopPropagation(); });
@@ -4268,6 +4332,13 @@ document.getElementById('site-modal-close').addEventListener('click', closeSiteM
 document.getElementById('site-modal-overlay').addEventListener('click', function(e){
   if(e.target === e.currentTarget) closeSiteModal();
 });
+(function(){
+  const sortSelect = document.getElementById('matrix-sort-select');
+  if(sortSelect){
+    sortSelect.value = matrixSortMode;
+    sortSelect.addEventListener('change', function(){ setMatrixSortMode(sortSelect.value); });
+  }
+})();
 document.getElementById('matrix-refresh-btn').addEventListener('click', function(){
   matrixDataCache = null;
   matrixLoading = true;
