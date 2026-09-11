@@ -606,7 +606,11 @@
     .add-btn{ display:none; }
     .event .del{ display:none; }
     .event .order-btns{ display:none; }
-    .event .recheck-toggle{ opacity:1; background:none !important; }
+    /* 재점검/NG는 실제로 켜져 있을 때만(활성 상태) 인쇄에 나오게 하고, 꺼져 있으면 아예 숨긴다 —
+       모든 이벤트에 회색 "재"/"NG" 글자가 항상 찍혀서 인쇄물이 지저분해지는 문제를 막는다. */
+    .event .recheck-toggle:not(.active){ display:none !important; }
+    .event .ng-toggle:not(.active){ display:none !important; }
+    .event .recheck-toggle.active{ background:none !important; }
     .event{ cursor:default; }
     /* 좌우 여백을 최대한 줄여서 달력이 쓸 수 있는 가로 폭을 넓히고, 그만큼 글씨도 화면보다 키움 */
     .cal-wrap{ padding:calc(3px*var(--print-scale)) 2px calc(4px*var(--print-scale)); overflow:visible; }
@@ -614,9 +618,13 @@
     .cal-head div{ font-size:calc(17px*var(--print-scale)); padding:calc(5px*var(--print-scale)) 4px calc(6px*var(--print-scale)); }
     .date-num{ font-size:calc(21px*var(--print-scale)); }
     /* 화면에서 쓰던 삭제/순서 버튼 자리(우측 44px)는 인쇄에선 필요 없어서(위에서 숨김) 그만큼 글 쓸 공간으로 돌려줌 */
-    .event{ font-size:calc(17px*var(--print-scale)); padding:calc(7px*var(--print-scale)) 14px calc(7px*var(--print-scale)) calc(13px*var(--print-scale)); margin:calc(2px*var(--print-scale)) 3px; }
-    .event .tag{ font-size:calc(17px*var(--print-scale)); }
-    .event .people[contenteditable]{ font-size:calc(15px*var(--print-scale)); }
+    /* 배율을 아주 낮게(예:20%) 잡아도 최소한의 가독성은 유지되도록 max()로 하한선을 둔다.
+       현장명(.site-input)이 인쇄 배율의 영향을 받지 않고 항상 크고 또렷하게 나오는 것과 비슷하게,
+       점검내용/태그/담당자 글씨도 이 하한선 밑으로는 더 작아지지 않는다. 내용이 적어서 배율이 1보다
+       커지는 경우에는 그대로 calc() 쪽이 커지므로 확대 동작은 그대로 유지된다. */
+    .event{ font-size:max(11px, calc(17px*var(--print-scale))); padding:calc(7px*var(--print-scale)) 14px calc(7px*var(--print-scale)) calc(13px*var(--print-scale)); margin:calc(2px*var(--print-scale)) 3px; }
+    .event .tag{ font-size:max(11px, calc(17px*var(--print-scale))); }
+    .event .people[contenteditable]{ font-size:max(9.5px, calc(15px*var(--print-scale))); }
     /* 일정이 없는 주(週)도 다른 주와 비슷한 높이로 채워서, A4 한 페이지 안에서 짜부러지지 않고
        고르게 정리되도록 함 (JS가 인쇄 직전 .week-grid에 min-height를 계산해서 넣어줌) */
     #weeks-container .week-grid{ align-content:stretch; }
@@ -988,7 +996,7 @@ const CAT_COLOR_PALETTE = [
   { fg:'#4B2E63', bg:'#F1E8F7' }
 ];
 const CATEGORY_CONFIG_DEFAULT = [
-  { key:'mh',      label:'M/H',     enabled:true, hasSubclass:false, grouped:false, autoCount:false, colorFg:'#085041', colorBg:'#E1F5EE' },
+  { key:'mh',      label:'M/H',     enabled:true, hasSubclass:false, grouped:false, autoCount:false, colorFg:'#085041', colorBg:'#E1F5EE', matrixArch:true, matrixInfra:false },
   { key:'target',  label:'TARGET',  enabled:true, hasSubclass:true,  grouped:true,  autoCount:true,  colorFg:'#0C447C', colorBg:'#E6F1FB' },
   { key:'jonghap', label:'종합점검', enabled:true, hasSubclass:false, grouped:false, autoCount:true,  colorFg:'#4A1B0C', colorBg:'#FAECE7' },
   { key:'jeokgi',  label:'토목적기', enabled:true, hasSubclass:false, grouped:false, autoCount:false, colorFg:'#633806', colorBg:'#FAEEDA' },
@@ -1010,6 +1018,12 @@ function getCategoryConfigList(){
     if(cached){ const parsed = JSON.parse(cached); if(Array.isArray(parsed) && parsed.length) return parsed; }
   }catch(e){}
   return CATEGORY_CONFIG_DEFAULT;
+}
+// 라벨(표시 이름)로 카테고리 key를 찾는 헬퍼 — 사용자가 "점검종류 관리"에서 직접 추가한 항목은
+// key가 내부적으로 자동 생성(catUsers1234...)되므로, 코드에서 라벨 문자열로 찾아 연결할 때 사용한다.
+function catKeyByLabel(label){
+  const found = getCategoryConfigList().find(function(c){ return c.label === label; });
+  return found ? found.key : null;
 }
 function setCategoryConfigList(list){
   categoryConfigCache = list;
@@ -1773,6 +1787,22 @@ function setSites(sites){
   if(sitesRef){ sitesRef.set(sites).catch(()=>{}); }
   updateSiteDatalist();
 }
+// 일정에 새 현장명을 직접 타이핑했을 때, 현장명 마스터 목록(현장별 점검 현황에 쓰이는 DB)에
+// 없는 이름이면 자동으로 추가해준다 — 매번 "현장명 관리"에서 따로 등록하지 않아도 되고,
+// 목록에 없어서 현황판에 안 잡히는 문제를 막아준다. 이미 있는 이름(공백/대소문자 차이 정도는 무시)은
+// 건너뛴다. 세미나/휴일처럼 실제 "현장"이 아닌 이벤트는 호출하는 쪽에서 애초에 걸러서 넘긴다.
+function autoRegisterSiteIfNew(name, catKey){
+  const trimmed = (name || '').trim();
+  if(!trimmed) return;
+  if(catKey === 'semina' || catKey === 'holiday') return;
+  const sites = getSites();
+  const already = sites.some(s => (s.name || '').trim().toLowerCase() === trimmed.toLowerCase());
+  if(already) return;
+  // 적기점검(jeokgi)은 인프라 현장에만 쓰는 카테고리라 인프라로, 나머지(TARGET/M/H/초기점검/준공/ISO 등
+  // 건축 전용 항목들)는 건축으로 분류한다 — 기존 현장명 관리 화면의 분류 기준과 동일.
+  const category = (catKey === 'jeokgi') ? '인프라' : '건축';
+  setSites(sites.concat([{ category, name: trimmed, due:'', manager:'' }]));
+}
 function initSitesSync(){
   try{
     ensureFirebaseApp();
@@ -1791,6 +1821,7 @@ function initSitesSync(){
     }, ()=>{});
   }catch(err){}
 }
+
 let noticeRef = null;
 let noticeCache = null;
 const NOTICE_LOCAL_CACHE_KEY = 'qsched-notice-cache';
@@ -2206,7 +2237,12 @@ function sendEventToTargetMonth(dateStr){
 // 건축/인프라는 분류가 달라 표를 위/아래로 나누고, 현장명·준공예정일·현장소장은 직접 수정 가능하며,
 // 점검을 여러 번(재점검 포함) 했으면 그만큼 행이 늘어난다. 칸의 날짜 글자는 직접 타이핑해 고칠 수 있고,
 // 📅 아이콘을 누르면 실제 일정표로 이동해 날짜를 골라 바로 추가할 수 있다.
-const MATRIX_COLUMNS_ARCH = [
+//
+// M/H처럼 "그냥 이 점검을 언제 했는지 날짜만 있으면 되는" 단순한 점검종류는, 아래 정적 배열에
+// 코드를 추가하지 않아도 "점검종류 관리"에서 새로 만들면 자동으로 표에 열이 생기도록 되어 있다.
+// (TARGET/종합점검/적기점검/ISO/준공점검처럼 세부항목이 여러 개거나 특수 로직이 필요한 것만 아래
+// 정적 배열에 직접 정의한다 — MATRIX_GENERIC_EXCLUDE_KEYS 참고)
+const MATRIX_COLUMNS_ARCH_STATIC = [
   { key:'target-건축', top:'TARGET점검', group:'건축', cat:'target',
     // '종합점검'은 겉보기엔 TARGET(건축) 하위 칸(금속천장 오른쪽)에 붙어 있지만, 실제로는
     // 달력의 별도 점검종류(cat:'jonghap')와 연동된다 — 달력에서 TARGET이 아니라 "종합점검"으로
@@ -2238,7 +2274,7 @@ const MATRIX_COLUMNS_ARCH = [
     extra:function(){ return { isoType:'정기' }; },
     tag:function(){ return 'ISO:정기'; } }
 ];
-const MATRIX_COLUMNS_INFRA = [
+const MATRIX_COLUMNS_INFRA_STATIC = [
   { key:'jeokgi', top:'적기점검', group:'적기점검', cat:'jeokgi', items:['1차','2차'],
     // 예전부터 있던 토목적기 일정은 회차 구분이 없었으므로, 표기 없는 건 1차로 간주해서 보여준다.
     match:function(e,item){ return e.cat==='jeokgi' && (e.subName===item || (!e.subName && item==='1차')); },
@@ -2253,8 +2289,52 @@ const MATRIX_COLUMNS_INFRA = [
     extra:function(){ return { isoType:'정기' }; },
     tag:function(){ return 'ISO:정기'; } }
 ];
+// 위 정적 배열에 이미 전용 로직(세부항목/특수 매칭)이 있는 항목들 — "점검종류 관리"에서 이 key를 가진
+// 항목의 표시 여부를 바꿔도 아래 자동생성 로직에서는 건드리지 않는다(중복 열 방지).
+const MATRIX_GENERIC_EXCLUDE_KEYS = ['target','jonghap','jeokgi','iso','wanju'];
+// 기본 제공 항목 중, Firebase에 아직 matrixArch/matrixInfra 값이 저장돼 있지 않은 예전 데이터에서도
+// 표에 정상적으로 나오도록 하는 하드코딩된 기본값 (M/H는 항상 건축 표에 나와야 함).
+const MATRIX_BUILTIN_SCOPE_DEFAULT = { mh:{ arch:true, infra:false } };
+// 카테고리 하나(cfg)가 건축(arch)/인프라(infra) 표에 열로 나와야 하는지 판단한다.
+// 우선순위: 1) cfg에 명시적으로 저장된 matrixArch/matrixInfra(불리언) 값이 있으면 그대로 사용
+//          2) 없으면 위 MATRIX_BUILTIN_SCOPE_DEFAULT의 기본값(M/H 등) 사용
+//          3) 그것도 없으면: 원래 기본 제공 항목(특별점검/세미나 등)은 표에 안 나오고,
+//             사용자가 "점검종류 관리"에서 새로 추가한 커스텀 항목(예: 초기점검, 테마점검)은
+//             기본적으로 건축 표에는 자동으로 나오고 인프라 표에는 안 나옴 — 지금까지 사용자가
+//             추가한 항목이 전부 건축 전용이었던 패턴에 맞춘 기본값이며, 필요하면 "점검종류 관리"에서
+//             건축/인프라 체크박스로 언제든 바꿀 수 있다.
+function effectiveMatrixFlag(cfg, scope){
+  const flagKey = scope === 'infra' ? 'matrixInfra' : 'matrixArch';
+  if(typeof cfg[flagKey] === 'boolean') return cfg[flagKey];
+  const builtinDefault = MATRIX_BUILTIN_SCOPE_DEFAULT[cfg.key];
+  if(builtinDefault) return !!builtinDefault[scope];
+  const isKnownBuiltin = CATEGORY_CONFIG_DEFAULT.some(function(d){ return d.key === cfg.key; });
+  if(isKnownBuiltin) return false;
+  return scope === 'arch';
+}
+// "점검종류 관리"에 등록된 카테고리 중, 전용 로직 없이 단순히 "언제 했는지 날짜만 있으면 되는" 항목들을
+// 매트릭스 컬럼 형태로 그때그때 자동 생성한다 — 새 점검종류를 추가/삭제/이름변경해도 코드를 다시 고칠
+// 필요 없이 이 함수가 호출될 때마다(=표를 그릴 때마다) 최신 카테고리 목록 기준으로 다시 만들어진다.
+function buildAutoMatrixColumns(scope){
+  return getCategoryConfigList().filter(function(c){
+    if(c.enabled === false) return false;
+    if(MATRIX_GENERIC_EXCLUDE_KEYS.indexOf(c.key) !== -1) return false;
+    return effectiveMatrixFlag(c, scope);
+  }).map(function(c){
+    return {
+      key: 'auto-' + c.key, top:null, group:c.label, cat:c.key, single:true, auto:true,
+      match:function(e){ return e.cat === c.key; },
+      extra:function(){ return {}; },
+      tag:function(){ return c.label; },
+      catFor:function(){ return c.key; }
+    };
+  });
+}
+// 자동생성 컬럼(M/H, 초기점검 등)을 TARGET점검(정적 컬럼)보다 앞쪽에 배치한다 — 사용자가 요청한 표시 순서.
+function getMatrixColumnsArch(){ return buildAutoMatrixColumns('arch').concat(MATRIX_COLUMNS_ARCH_STATIC); }
+function getMatrixColumnsInfra(){ return buildAutoMatrixColumns('infra').concat(MATRIX_COLUMNS_INFRA_STATIC); }
 const MATRIX_COL_BY_KEY = {};
-MATRIX_COLUMNS_ARCH.concat(MATRIX_COLUMNS_INFRA).forEach(function(col){
+MATRIX_COLUMNS_ARCH_STATIC.concat(MATRIX_COLUMNS_INFRA_STATIC).forEach(function(col){
   if(!MATRIX_COL_BY_KEY[col.key]) MATRIX_COL_BY_KEY[col.key] = col;
 });
 // ── 2026-09 엑셀(QC점검현황) 과거 점검 이력 1회성 가져오기 ────────────────────
@@ -2374,7 +2454,7 @@ let matrixListeners = {}; // stateKey -> { ref, fn } — 매트릭스가 열려 
 let matrixKeyData = {}; // stateKey -> events[]
 function matrixAllColumnsUnion(){
   const seen = {}; const list = [];
-  MATRIX_COLUMNS_ARCH.concat(MATRIX_COLUMNS_INFRA).forEach(function(col){
+  getMatrixColumnsArch().concat(getMatrixColumnsInfra()).forEach(function(col){
     if(!seen[col.group]){ seen[col.group] = true; list.push(col); }
   });
   return list;
@@ -2953,8 +3033,8 @@ function renderSiteMatrix(){
     if(s.category === '인프라') infraEntries.push({ site:s, idx:idx });
     else archEntries.push({ site:s, idx:idx });
   });
-  renderMatrixSection('matrix-table-arch', MATRIX_COLUMNS_ARCH, sortSiteEntries(archEntries));
-  renderMatrixSection('matrix-table-infra', MATRIX_COLUMNS_INFRA, sortSiteEntries(infraEntries));
+  renderMatrixSection('matrix-table-arch', getMatrixColumnsArch(), sortSiteEntries(archEntries));
+  renderMatrixSection('matrix-table-infra', getMatrixColumnsInfra(), sortSiteEntries(infraEntries));
   const sortSelectEl = document.getElementById('matrix-sort-select');
   if(sortSelectEl && sortSelectEl.value !== matrixSortMode) sortSelectEl.value = matrixSortMode;
   const statusEl = document.getElementById('matrix-status');
@@ -2978,8 +3058,6 @@ function bindSiteAddRow(suffix, category){
     renderSiteMatrix();
   });
 }
-
-
 
 // 담당자(점검자) 자동완성 — 여러 명을 쉼표(,)로 넣고 뺄 수 있음.
 // 해당 날짜에 휴무로 지정된 점검자, 이미 추가된 점검자는 목록에서 제외.
@@ -3323,6 +3401,9 @@ function buildEventEl(seg){
         seg.ids.forEach(id=>{ const ev=EVENTS.find(x=>x.id===id); if(ev) ev.site = siteInput.value; });
         updateTotalStats();
         scheduleSave();
+      });
+      siteInput.addEventListener('blur', ()=>{
+        autoRegisterSiteIfNew(siteInput.value, catKey);
       });
       attachSiteAutocomplete(siteInput, seg);
       box.appendChild(siteInput);
@@ -3933,6 +4014,42 @@ function renderCatMgrList(){
     subLabel.appendChild(document.createTextNode('세부분류'));
     row.appendChild(subLabel);
 
+    // TARGET/종합점검/적기점검/ISO/준공점검은 이미 전용 열 로직이 있으므로 이 체크박스를 보여주지 않는다
+    // (중복 열 방지) — 그 외 항목은 여기서 "현장별 점검 현황" 표의 건축/인프라 열 노출 여부를 정한다.
+    if(MATRIX_GENERIC_EXCLUDE_KEYS.indexOf(cfg.key) === -1){
+      const archLabel = document.createElement('label');
+      archLabel.className = 'catmgr-opt';
+      const archCheck = document.createElement('input');
+      archCheck.type = 'checkbox';
+      archCheck.checked = effectiveMatrixFlag(cfg, 'arch');
+      archCheck.addEventListener('change', function(){
+        const list2 = getCategoryConfigList().slice();
+        list2[idx] = Object.assign({}, list2[idx], { matrixArch: archCheck.checked });
+        setCategoryConfigList(list2);
+        if(document.getElementById('site-modal-overlay') && !document.getElementById('site-modal-overlay').hidden) renderSiteMatrix();
+      });
+      archLabel.appendChild(archCheck);
+      archLabel.appendChild(document.createTextNode('건축표'));
+      archLabel.title = '현장명 → 현장별 점검 현황(건축) 표에 이 점검종류의 열을 자동으로 추가합니다';
+      row.appendChild(archLabel);
+
+      const infraLabel = document.createElement('label');
+      infraLabel.className = 'catmgr-opt';
+      const infraCheck = document.createElement('input');
+      infraCheck.type = 'checkbox';
+      infraCheck.checked = effectiveMatrixFlag(cfg, 'infra');
+      infraCheck.addEventListener('change', function(){
+        const list2 = getCategoryConfigList().slice();
+        list2[idx] = Object.assign({}, list2[idx], { matrixInfra: infraCheck.checked });
+        setCategoryConfigList(list2);
+        if(document.getElementById('site-modal-overlay') && !document.getElementById('site-modal-overlay').hidden) renderSiteMatrix();
+      });
+      infraLabel.appendChild(infraCheck);
+      infraLabel.appendChild(document.createTextNode('인프라표'));
+      infraLabel.title = '현장명 → 현장별 점검 현황(인프라) 표에 이 점검종류의 열을 자동으로 추가합니다';
+      row.appendChild(infraLabel);
+    }
+
     if(cfg.hasSubclass){
       const groupLabel = document.createElement('label');
       groupLabel.className = 'catmgr-opt';
@@ -4025,7 +4142,10 @@ document.getElementById('catmgr-add-btn').addEventListener('click', function(){
   const colorIdx = list.length % CAT_COLOR_PALETTE.length;
   const color = CAT_COLOR_PALETTE[colorIdx];
   const key = 'cat' + Date.now();
-  list.push({ key, label:name, enabled:true, hasSubclass:hasSub, grouped: hasSub && grouped, autoCount:true, colorFg:color.fg, colorBg:color.bg });
+  // 새로 추가하는 점검종류는 기본적으로 "현장별 점검 현황"의 건축 표에 자동으로 열이 생기게 한다
+  // (지금까지 사용자가 추가한 항목이 전부 건축 전용이었던 패턴에 맞춘 기본값) — 필요하면 방금 만든
+  // 항목 옆의 "건축표"/"인프라표" 체크박스로 바로 바꿀 수 있다.
+  list.push({ key, label:name, enabled:true, hasSubclass:hasSub, grouped: hasSub && grouped, autoCount:true, colorFg:color.fg, colorBg:color.bg, matrixArch:true, matrixInfra:false });
   setCategoryConfigList(list);
   nameInput.value = '';
   document.getElementById('catmgr-add-subclass').checked = false;
