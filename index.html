@@ -2333,30 +2333,31 @@ function groupStaticColsByCat(staticCols){
 }
 const MATRIX_STATIC_BY_CAT_ARCH = groupStaticColsByCat(MATRIX_COLUMNS_ARCH_STATIC);
 const MATRIX_STATIC_BY_CAT_INFRA = groupStaticColsByCat(MATRIX_COLUMNS_INFRA_STATIC);
-// 매트릭스 컬럼 순서를 "점검종류 관리" 화면에 나열된 순서(위→아래 = 왼쪽→오른쪽)와 항상 똑같이 맞춘다.
-// 정적 컬럼(TARGET/준공점검/ISO/적기점검)이든 자동생성 컬럼(M/H·초기점검 등)이든 상관없이, 카테고리
-// 목록을 한 번 순서대로 훑으면서 각 항목이 이 표(scope)에 나와야 하면 그 자리에 컬럼을 끼워 넣는 방식이라,
-// 사용자가 "점검종류 관리"에서 순서를 위/아래로 바꾸면 표의 열 순서도 새로고침 시 그대로 따라간다.
+// 매트릭스 컬럼 순서 규칙(사용자 확정 요청): 자동생성 컬럼(M/H·초기점검 등 "단순" 점검종류)은 항상
+// TARGET/준공점검/ISO/적기점검 같은 정적(전용 로직) 컬럼보다 앞쪽에 온다 — 카테고리 목록 안에서 두 컬럼이
+// 서로 어떤 순서로 등록돼 있든 상관없이 이 규칙이 우선한다. 같은 그룹(자동생성끼리, 정적끼리) 안에서의
+// 순서는 "점검종류 관리"에 나열된 순서를 따른다.
 function buildOrderedMatrixColumns(scope){
   const staticByCat = scope === 'infra' ? MATRIX_STATIC_BY_CAT_INFRA : MATRIX_STATIC_BY_CAT_ARCH;
   const usedCats = {};
-  const list = [];
+  const autoList = [];
+  const staticList = [];
   getCategoryConfigList().forEach(function(c){
     if(MATRIX_GENERIC_EXCLUDE_KEYS.indexOf(c.key) !== -1){
       // TARGET처럼 전용 정적 컬럼이 있는 항목 — 종합점검(jonghap)처럼 이 표에 해당 항목이 없으면(예:
       // 인프라 표엔 TARGET 자체가 없음) 아무것도 끼워 넣지 않고 넘어간다.
       const cols = staticByCat[c.key];
-      if(cols){ usedCats[c.key] = true; list.push.apply(list, cols); }
+      if(cols){ usedCats[c.key] = true; staticList.push.apply(staticList, cols); }
       return;
     }
     if(c.enabled === false) return;
-    if(effectiveMatrixFlag(c, scope)) list.push(buildAutoMatrixColumn(c));
+    if(effectiveMatrixFlag(c, scope)) autoList.push(buildAutoMatrixColumn(c));
   });
-  // 혹시 "점검종류 관리" 목록에 없는 cat의 정적 컬럼이 있으면(방어적 처리) 유실되지 않도록 맨 뒤에 붙인다.
+  // 혹시 "점검종류 관리" 목록에 없는 cat의 정적 컬럼이 있으면(방어적 처리) 유실되지 않도록 뒤에 붙인다.
   Object.keys(staticByCat).forEach(function(catKey){
-    if(!usedCats[catKey]) list.push.apply(list, staticByCat[catKey]);
+    if(!usedCats[catKey]) staticList.push.apply(staticList, staticByCat[catKey]);
   });
-  return list;
+  return autoList.concat(staticList);
 }
 function getMatrixColumnsArch(){ return buildOrderedMatrixColumns('arch'); }
 function getMatrixColumnsInfra(){ return buildOrderedMatrixColumns('infra'); }
