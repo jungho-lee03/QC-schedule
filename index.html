@@ -2312,27 +2312,54 @@ function effectiveMatrixFlag(cfg, scope){
   if(isKnownBuiltin) return false;
   return scope === 'arch';
 }
-// "점검종류 관리"에 등록된 카테고리 중, 전용 로직 없이 단순히 "언제 했는지 날짜만 있으면 되는" 항목들을
-// 매트릭스 컬럼 형태로 그때그때 자동 생성한다 — 새 점검종류를 추가/삭제/이름변경해도 코드를 다시 고칠
-// 필요 없이 이 함수가 호출될 때마다(=표를 그릴 때마다) 최신 카테고리 목록 기준으로 다시 만들어진다.
-function buildAutoMatrixColumns(scope){
-  return getCategoryConfigList().filter(function(c){
-    if(c.enabled === false) return false;
-    if(MATRIX_GENERIC_EXCLUDE_KEYS.indexOf(c.key) !== -1) return false;
-    return effectiveMatrixFlag(c, scope);
-  }).map(function(c){
-    return {
-      key: 'auto-' + c.key, top:null, group:c.label, cat:c.key, single:true, auto:true,
-      match:function(e){ return e.cat === c.key; },
-      extra:function(){ return {}; },
-      tag:function(){ return c.label; },
-      catFor:function(){ return c.key; }
-    };
-  });
+// "점검종류 관리"에 등록된 카테고리 하나(c)를, 전용 로직 없이 단순히 "언제 했는지 날짜만 있으면 되는"
+// 매트릭스 컬럼 하나로 변환한다.
+function buildAutoMatrixColumn(c){
+  return {
+    key: 'auto-' + c.key, top:null, group:c.label, cat:c.key, single:true, auto:true,
+    match:function(e){ return e.cat === c.key; },
+    extra:function(){ return {}; },
+    tag:function(){ return c.label; },
+    catFor:function(){ return c.key; }
+  };
 }
-// 자동생성 컬럼(M/H, 초기점검 등)을 TARGET점검(정적 컬럼)보다 앞쪽에 배치한다 — 사용자가 요청한 표시 순서.
-function getMatrixColumnsArch(){ return buildAutoMatrixColumns('arch').concat(MATRIX_COLUMNS_ARCH_STATIC); }
-function getMatrixColumnsInfra(){ return buildAutoMatrixColumns('infra').concat(MATRIX_COLUMNS_INFRA_STATIC); }
+// 정적(전용 로직) 컬럼들을 소속 카테고리 key(col.cat) 기준으로 미리 묶어둔다 — 예: target-건축/기계/전기는
+// 전부 cat:'target' 이므로 한 그룹으로 묶여서, "점검종류 관리"에서 TARGET 항목이 있는 자리에 세 컬럼이
+// 통째로 들어간다.
+function groupStaticColsByCat(staticCols){
+  const map = {};
+  staticCols.forEach(function(col){ (map[col.cat] = map[col.cat] || []).push(col); });
+  return map;
+}
+const MATRIX_STATIC_BY_CAT_ARCH = groupStaticColsByCat(MATRIX_COLUMNS_ARCH_STATIC);
+const MATRIX_STATIC_BY_CAT_INFRA = groupStaticColsByCat(MATRIX_COLUMNS_INFRA_STATIC);
+// 매트릭스 컬럼 순서를 "점검종류 관리" 화면에 나열된 순서(위→아래 = 왼쪽→오른쪽)와 항상 똑같이 맞춘다.
+// 정적 컬럼(TARGET/준공점검/ISO/적기점검)이든 자동생성 컬럼(M/H·초기점검 등)이든 상관없이, 카테고리
+// 목록을 한 번 순서대로 훑으면서 각 항목이 이 표(scope)에 나와야 하면 그 자리에 컬럼을 끼워 넣는 방식이라,
+// 사용자가 "점검종류 관리"에서 순서를 위/아래로 바꾸면 표의 열 순서도 새로고침 시 그대로 따라간다.
+function buildOrderedMatrixColumns(scope){
+  const staticByCat = scope === 'infra' ? MATRIX_STATIC_BY_CAT_INFRA : MATRIX_STATIC_BY_CAT_ARCH;
+  const usedCats = {};
+  const list = [];
+  getCategoryConfigList().forEach(function(c){
+    if(MATRIX_GENERIC_EXCLUDE_KEYS.indexOf(c.key) !== -1){
+      // TARGET처럼 전용 정적 컬럼이 있는 항목 — 종합점검(jonghap)처럼 이 표에 해당 항목이 없으면(예:
+      // 인프라 표엔 TARGET 자체가 없음) 아무것도 끼워 넣지 않고 넘어간다.
+      const cols = staticByCat[c.key];
+      if(cols){ usedCats[c.key] = true; list.push.apply(list, cols); }
+      return;
+    }
+    if(c.enabled === false) return;
+    if(effectiveMatrixFlag(c, scope)) list.push(buildAutoMatrixColumn(c));
+  });
+  // 혹시 "점검종류 관리" 목록에 없는 cat의 정적 컬럼이 있으면(방어적 처리) 유실되지 않도록 맨 뒤에 붙인다.
+  Object.keys(staticByCat).forEach(function(catKey){
+    if(!usedCats[catKey]) list.push.apply(list, staticByCat[catKey]);
+  });
+  return list;
+}
+function getMatrixColumnsArch(){ return buildOrderedMatrixColumns('arch'); }
+function getMatrixColumnsInfra(){ return buildOrderedMatrixColumns('infra'); }
 const MATRIX_COL_BY_KEY = {};
 MATRIX_COLUMNS_ARCH_STATIC.concat(MATRIX_COLUMNS_INFRA_STATIC).forEach(function(col){
   if(!MATRIX_COL_BY_KEY[col.key]) MATRIX_COL_BY_KEY[col.key] = col;
