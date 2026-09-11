@@ -2208,16 +2208,18 @@ function sendEventToTargetMonth(dateStr){
 // 📅 아이콘을 누르면 실제 일정표로 이동해 날짜를 골라 바로 추가할 수 있다.
 const MATRIX_COLUMNS_ARCH = [
   { key:'target-건축', top:'TARGET점검', group:'건축', cat:'target',
-    items:['골조1차','골조2차','조적','석공사','타일','도장','금속천장'],
-    match:function(e,item){ return e.cat==='target' && e.discipline==='건축' && e.className===item; },
-    extra:function(item){ return { discipline:'건축', className:item }; },
-    tag:function(item){ return 'TARGET(건축):' + item; } },
-  { key:'jonghap-건축', top:null, group:'건축종합', cat:'jonghap', single:true,
-    // 종합점검은 TARGET 하위분류가 아니라 별도 점검종류(cat:'jonghap')이므로, 일정표에서
-    // "종합점검"으로 입력한 실제 일정을 그대로 이 칸(건축종합)에 연동해서 보여준다.
-    match:function(e){ return e.cat==='jonghap'; },
-    extra:function(){ return {}; },
-    tag:function(){ return '종합점검'; } },
+    // '종합점검'은 겉보기엔 TARGET(건축) 하위 칸(금속천장 오른쪽)에 붙어 있지만, 실제로는
+    // 달력의 별도 점검종류(cat:'jonghap')와 연동된다 — 달력에서 TARGET이 아니라 "종합점검"으로
+    // 입력한 일정이 그대로 이 칸에 표시된다. 그래서 이 항목만 match/extra/tag/catFor에서
+    // 따로 분기해서 처리한다.
+    items:['골조1차','골조2차','조적','석공사','타일','도장','금속천장','종합점검'],
+    match:function(e,item){
+      if(item === '종합점검') return e.cat === 'jonghap';
+      return e.cat==='target' && e.discipline==='건축' && e.className===item;
+    },
+    extra:function(item){ return item === '종합점검' ? {} : { discipline:'건축', className:item }; },
+    tag:function(item){ return item === '종합점검' ? '종합점검' : ('TARGET(건축):' + item); },
+    catFor:function(item){ return item === '종합점검' ? 'jonghap' : 'target'; } },
   { key:'target-기계', top:'TARGET점검', group:'기계', cat:'target', items:['배관','시스템'],
     match:function(e,item){ return e.cat==='target' && e.discipline==='기계' && e.className===item; },
     extra:function(item){ return { discipline:'기계', className:item }; },
@@ -2305,7 +2307,8 @@ async function runExcelImportOnce(){
           if(exists){ skippedDup++; return; }
           const extra = Object.assign({}, col.extra ? col.extra(row.item) : {}, { isRecheck:false });
           const tag = col.tag ? col.tag(row.item) : col.group;
-          list.push(mkEvent('e' + (ctx.idCounter++), 'g' + (ctx.gidCounter++), row.date, col.cat, tag, row.site, '', extra));
+          const rowCat = col.catFor ? col.catFor(row.item) : col.cat;
+          list.push(mkEvent('e' + (ctx.idCounter++), 'g' + (ctx.gidCounter++), row.date, rowCat, tag, row.site, '', extra));
           added++;
         });
         (byMonthCal[stateKey] || []).forEach(function(row){
@@ -2611,7 +2614,8 @@ async function createMatrixMatch(siteName, col, item, dateStr, isRecheck){
     const ctx = await getStateEvents(stateKey);
     const extra = Object.assign({}, col.extra ? col.extra(item) : {}, { isRecheck: !!isRecheck });
     const tag = col.tag ? col.tag(item) : col.group;
-    const newEv = mkEvent('e' + (ctx.idCounter++), 'g' + (ctx.gidCounter++), dateStr, col.cat, tag, siteName, '', extra);
+    const evCat = col.catFor ? col.catFor(item) : col.cat;
+    const newEv = mkEvent('e' + (ctx.idCounter++), 'g' + (ctx.gidCounter++), dateStr, evCat, tag, siteName, '', extra);
     matrixListFor(ctx).push(newEv);
     await saveStateEvents(ctx);
     matrixRefreshAfterWrite();
@@ -3120,7 +3124,7 @@ function openPicker(btn, dateKey){
 }
 
 function addEvent(dateKey, catKey){
-  if(pendingMatrixFill && pendingMatrixFill.col.cat === catKey){
+  if(pendingMatrixFill && (pendingMatrixFill.col.catFor ? pendingMatrixFill.col.catFor(pendingMatrixFill.item) : pendingMatrixFill.col.cat) === catKey){
     const fill = pendingMatrixFill;
     const extra = Object.assign({}, fill.col.extra ? fill.col.extra(fill.item) : {}, { isRecheck:false });
     const tag = fill.col.tag ? fill.col.tag(fill.item) : fill.col.group;
@@ -3461,7 +3465,7 @@ function render(){
         ev.stopPropagation();
         // 매트릭스에서 "달력으로 이동해서 추가"를 누른 상태라면, 어떤 점검인지 이미 정해져 있으므로
         // 종류를 다시 고르는 팝업(드롭박스) 없이 그 날짜를 클릭하는 즉시 바로 들어간다.
-        if(pendingMatrixFill){ addEvent(d.key, pendingMatrixFill.col.cat); return; }
+        if(pendingMatrixFill){ addEvent(d.key, pendingMatrixFill.col.catFor ? pendingMatrixFill.col.catFor(pendingMatrixFill.item) : pendingMatrixFill.col.cat); return; }
         openPicker(addBtn, d.key);
       };
       weekGrid.appendChild(addBtn);
