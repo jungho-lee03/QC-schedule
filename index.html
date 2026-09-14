@@ -113,6 +113,19 @@
   }
   .print-scale-wrap input::placeholder{ color:#9FB1C6; }
 
+  .inspector-filter-wrap{
+    display:inline-flex; align-items:center; gap:5px; font-size:12px; color:#B9C6D6;
+    padding-right:10px; margin-right:2px; border-right:1px solid rgba(255,255,255,0.18);
+  }
+  .inspector-filter-wrap select{
+    font-family:inherit; font-size:12.5px; padding:6px 8px; border-radius:6px; max-width:150px;
+    border:1px solid rgba(255,255,255,0.25); background:rgba(255,255,255,0.06); color:#fff;
+  }
+  .inspector-filter-wrap select option{ color:#22262B; }
+  .inspector-filter-wrap.active{ color:#E8A33D; }
+  .inspector-filter-wrap.active select{ border-color:#E8A33D; background:rgba(232,163,61,0.18); }
+  @media print{ .inspector-filter-wrap{ display:none !important; } }
+
   header.doc{ padding:26px 32px 18px; background:var(--navy); color:#fff; }
   header.doc .row1{ display:flex; justify-content:space-between; align-items:flex-start; gap:20px; flex-wrap:wrap; }
   .doc-title{ font-size:22px; font-weight:600; letter-spacing:-0.2px; outline:none; }
@@ -690,6 +703,10 @@
       <span id="save-status" style="color:#9FD6A8;"></span>
     </div>
     <div class="actions">
+      <span class="inspector-filter-wrap" title="선택한 점검자가 들어있는 일정만 화면에 표시합니다 (내 화면에서만 보이며, 데이터는 바뀌지 않습니다).">
+        <label for="inspector-filter-select">내 일정만</label>
+        <select id="inspector-filter-select"><option value="">전체보기</option></select>
+      </span>
       <div class="month-nav">
         <button id="btn-prev-month" type="button" title="전월 일정 확인/작성">◀ 전월</button>
         <span id="month-label" class="month-label"></span>
@@ -1983,6 +2000,54 @@ function setInspectors(list){
   try{ localStorage.setItem(INSPECTORS_LOCAL_CACHE_KEY, JSON.stringify(list)); }catch(e){}
   if(inspectorsRef){ inspectorsRef.set(list).catch(()=>{}); }
 }
+
+// ===== "내 일정만" 필터 (이 기기에서만 적용되는 화면 표시 설정 — 데이터/다른 사람 화면에는 영향 없음) =====
+const INSPECTOR_FILTER_KEY = 'qsched-inspector-filter';
+let inspectorFilterName = '';
+try{ inspectorFilterName = localStorage.getItem(INSPECTOR_FILTER_KEY) || ''; }catch(e){}
+function eventMatchesInspectorFilter(e){
+  if(!inspectorFilterName) return true;
+  if(e.cat === 'holiday') return true; // 휴일 표시는 필터와 무관하게 항상 보여줌
+  const names = (e.people || '').split(',').map(s=>s.trim()).filter(Boolean);
+  return names.indexOf(inspectorFilterName) !== -1;
+}
+function populateInspectorFilterSelect(){
+  const sel = document.getElementById('inspector-filter-select');
+  if(!sel) return;
+  const prev = inspectorFilterName;
+  sel.innerHTML = '';
+  const optAll = document.createElement('option');
+  optAll.value = ''; optAll.textContent = '전체보기';
+  sel.appendChild(optAll);
+  getInspectors().forEach(insp=>{
+    if(!insp || !insp.name) return;
+    const opt = document.createElement('option');
+    opt.value = insp.name; opt.textContent = insp.name;
+    sel.appendChild(opt);
+  });
+  // 점검자 목록에서 이미 빠졌더라도, 지금 선택되어 있던 이름은 유지해서 갑자기 "전체보기"로 바뀌지 않게 함
+  if(prev && !Array.from(sel.options).some(o=>o.value===prev)){
+    const opt = document.createElement('option');
+    opt.value = prev; opt.textContent = prev + ' (미등록)';
+    sel.appendChild(opt);
+  }
+  sel.value = prev;
+  const wrap = sel.closest('.inspector-filter-wrap');
+  if(wrap) wrap.classList.toggle('active', !!prev);
+}
+function initInspectorFilterUI(){
+  const sel = document.getElementById('inspector-filter-select');
+  if(!sel) return;
+  populateInspectorFilterSelect();
+  sel.addEventListener('change', function(){
+    inspectorFilterName = this.value;
+    try{ localStorage.setItem(INSPECTOR_FILTER_KEY, inspectorFilterName); }catch(e){}
+    const wrap = sel.closest('.inspector-filter-wrap');
+    if(wrap) wrap.classList.toggle('active', !!inspectorFilterName);
+    render();
+  });
+}
+
 function initInspectorsSync(){
   try{
     ensureFirebaseApp();
@@ -1994,6 +2059,7 @@ function initInspectorsSync(){
         try{ localStorage.setItem(INSPECTORS_LOCAL_CACHE_KEY, JSON.stringify(val)); }catch(e){}
         const overlay = document.getElementById('inspector-modal-overlay');
         if(overlay && !overlay.hidden) renderInspectorList();
+        populateInspectorFilterSelect();
       } else if(val === null){
         inspectorsRef.set(INSPECTORS_DEFAULT).catch(()=>{});
       }
@@ -3481,7 +3547,7 @@ function removeIds(ids){
 }
 
 function layoutWeek(weekDays){
-  const dayEvents = weekDays.map(dk => EVENTS.filter(e => e.date === dk));
+  const dayEvents = weekDays.map(dk => EVENTS.filter(e => e.date === dk && eventMatchesInspectorFilter(e)));
   const visited = new Set();
   const segments = [];
   const n = weekDays.length;
@@ -4849,6 +4915,7 @@ runExcelImportOnce();
 runExcelImportOnce2();
 runExcelImportOnce3();
 initInspectorsSync();
+initInspectorFilterUI();
 initNoticeSync();
 initCategoryConfigSync();
 initSubclassesSync();
