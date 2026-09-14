@@ -547,6 +547,12 @@
   .matrix-table td.mx-cell.empty.yearly-overdue{ background:#FFF6E0; color:#8A6600; font-weight:600; }
   .matrix-table td.mx-cell.needs-recheck{ background:var(--ng-bg); color:var(--ng-fg); font-weight:700; border:2px solid var(--ng-fg); }
   .matrix-legend-note{ font-size:11px; color:var(--ng-fg); padding:2px 4px 6px; }
+  .year-stats-yearnav{ display:flex; align-items:center; gap:10px; padding:8px 4px 2px; }
+  .year-stats-yearnav button{ padding:4px 10px; border-radius:6px; border:1px solid var(--line); background:var(--card); cursor:pointer; font-size:13px; }
+  .year-stats-yearnav button:hover{ background:#EEF1F5; }
+  #year-stats-year-label{ font-size:15px; font-weight:700; min-width:64px; text-align:center; }
+  .year-stats-loading{ font-size:11.5px; color:var(--muted); }
+  .year-stats-summary{ padding:10px 4px; }
   .mx-hist-ng{ display:inline-block; margin-left:6px; padding:2px 6px; border-radius:10px; font-size:10.5px; border:1px solid var(--line); color:var(--muted); cursor:pointer; user-select:none; white-space:nowrap; }
   .mx-hist-ng.active{ background:var(--ng-bg); color:var(--ng-fg); border-color:var(--ng-fg); font-weight:700; }
   .matrix-table td.mx-cell:hover{ filter:brightness(0.96); }
@@ -726,6 +732,7 @@
         <input id="print-scale-input" type="number" min="30" max="200" step="5" placeholder="자동">
       </span>
       <button id="btn-sites" type="button">현장명</button>
+      <button id="btn-year-stats" type="button">연도별 집계</button>
       <button id="btn-inspectors" type="button">점검자 등록/수정</button>
       <button id="btn-categories" type="button">점검종류 관리</button>
       <button id="btn-reset" type="button" class="primary">초기 상태로 되돌리기</button>
@@ -935,6 +942,22 @@
 </div>
 <datalist id="site-master-datalist"></datalist>
 
+<div class="cls-modal-overlay" id="year-stats-modal-overlay" hidden>
+  <div class="cls-modal site-modal-xl">
+    <div class="cls-modal-head">
+      <div class="cls-modal-title">연도별 집계</div>
+      <button type="button" class="cls-modal-close" id="year-stats-modal-close">×</button>
+    </div>
+    <div class="year-stats-yearnav">
+      <button type="button" id="year-stats-prev">◀</button>
+      <span id="year-stats-year-label">2026년</span>
+      <button type="button" id="year-stats-next">▶</button>
+      <span class="year-stats-loading" id="year-stats-loading"></span>
+    </div>
+    <div class="summary year-stats-summary" id="year-stats-summary"></div>
+  </div>
+</div>
+
 <div class="cls-modal-overlay" id="matrix-history-modal-overlay" hidden>
   <div class="cls-modal site-modal-lg">
     <div class="cls-modal-head">
@@ -1035,10 +1058,10 @@ const CAT_COLOR_PALETTE = [
   { fg:'#4B2E63', bg:'#F1E8F7' }
 ];
 const CATEGORY_CONFIG_DEFAULT = [
-  { key:'mh',      label:'M/H',     enabled:true, hasSubclass:false, grouped:false, autoCount:true, colorFg:'#085041', colorBg:'#E1F5EE', matrixArch:true, matrixInfra:false },
+  { key:'mh',      label:'M/H점검',  enabled:true, hasSubclass:false, grouped:false, autoCount:true, colorFg:'#085041', colorBg:'#E1F5EE', matrixArch:true, matrixInfra:false },
   { key:'target',  label:'TARGET',  enabled:true, hasSubclass:true,  grouped:true,  autoCount:true,  colorFg:'#0C447C', colorBg:'#E6F1FB' },
   { key:'jonghap', label:'종합점검', enabled:true, hasSubclass:false, grouped:false, autoCount:true,  colorFg:'#4A1B0C', colorBg:'#FAECE7' },
-  { key:'jeokgi',  label:'토목적기', enabled:true, hasSubclass:false, grouped:false, autoCount:true, colorFg:'#633806', colorBg:'#FAEEDA' },
+  { key:'jeokgi',  label:'적기점검', enabled:true, hasSubclass:false, grouped:false, autoCount:true, colorFg:'#633806', colorBg:'#FAEEDA' },
   { key:'iso',     label:'ISO',     enabled:true, hasSubclass:true,  grouped:false, autoCount:false, colorFg:'#3C3489', colorBg:'#EEEDFE' },
   { key:'wanju',   label:'준공점검', enabled:true, hasSubclass:false, grouped:false, autoCount:true,  colorFg:'#72243E', colorBg:'#FBEAF0' },
   { key:'special', label:'특별점검', enabled:true, hasSubclass:false, grouped:false, autoCount:true,  colorFg:'#7A1F1F', colorBg:'#FBE7E7' },
@@ -1063,6 +1086,15 @@ function getCategoryConfigList(){
 function catKeyByLabel(label){
   const found = getCategoryConfigList().find(function(c){ return c.label === label; });
   return found ? found.key : null;
+}
+// 반대로 key로 현재 저장된 표시 이름(라벨)을 찾는 헬퍼 — 매트릭스 정적 컬럼의 tag()처럼 "점검종류 관리"
+// 라벨과 항상 똑같은 문구를 써야 하는 곳에서, 문자열을 하드코딩해두면 사용자가 라벨을 바꾸거나(예:
+// 준공점검→준공) 코드 기본값이 바뀔 때(2026-09-14: M/H→M/H점검, 토목적기→적기점검) 서로 어긋나는
+// 문제(캘린더에서 새 일정 추가할 땐 "적기", 현장명 리스트에서 채워 넣을 땐 "적기점검"으로 서로 다르게
+// 뜨던 버그)가 생긴다. 이 헬퍼를 쓰면 항상 "점검종류 관리"에 저장된 실제 라벨을 그대로 따라간다.
+function labelForCat(catKey){
+  const cfg = getCategoryConfigList().find(function(c){ return c.key === catKey; });
+  return cfg ? cfg.label : catKey;
 }
 function setCategoryConfigList(list){
   categoryConfigCache = list;
@@ -1223,7 +1255,14 @@ function buildStatTooltip(events, itemFn){
   const lines = dedupeByGid(events).map(function(e){
     const site = (e.site || '').trim() || '현장명 미입력';
     const item = itemFn ? itemFn(e) : null;
-    return item ? (site + '(' + item + ')') : site;
+    let line = item ? (site + '(' + item + ')') : site;
+    // "현장명 리스트"(매트릭스 이력)에서 재점검필요(NG)로 표시해둔 건이면, 별도 카드로 분리하지 않고
+    // 이 목록 자체에 바로 표시한다(2026-09-14 사용자 요청) — 메모(사유)를 적어뒀으면 함께 보여줌.
+    if(e.needsRecheck){
+      line += ' ⚠재점검필요';
+      if(e.note) line += ' — ' + e.note;
+    }
+    return line;
   });
   return lines.length ? lines.join('\n') : '아직 없음';
 }
@@ -1497,17 +1536,17 @@ function mkEvent(id, gid, date, cat, tag, site, people, extra){
 
 const DEFAULT_EVENTS = [
   mkEvent('e1','g1','2026-08-03','semina','기술세미나','코리아빌드 견학','박정호, 신성근, 한진헌, 류지수'),
-  mkEvent('e2','g2','2026-08-04','mh','M/H','시티오씨엘 9단지','박정호, 신성근, 한진헌, 류지수'),
+  mkEvent('e2','g2','2026-08-04','mh','M/H점검','시티오씨엘 9단지','박정호, 신성근, 한진헌, 류지수'),
   mkEvent('e3','g3','2026-08-09','target','TARGET(건축):금속천정','익산부송아이파크','신성근',{discipline:'건축',className:'금속천정'}),
   mkEvent('e4','g4','2026-08-10','target','TARGET(건축):골조1차','현대해상일산사옥','박찬우, 신성근',{discipline:'건축',className:'골조1차'}),
   mkEvent('e5','g5','2026-08-11','target','TARGET(기계):시스템','청주가경6단지','한진헌, 류지수',{discipline:'기계',className:'시스템'}),
-  mkEvent('e6','g6','2026-08-12','jeokgi','적기','파주메디컬클러스터','배준호'),
+  mkEvent('e6','g6','2026-08-12','jeokgi','적기점검','파주메디컬클러스터','배준호'),
   mkEvent('e7','g7','2026-08-17','holiday','','대체공휴일',''),
   mkEvent('e8','g8','2026-08-18','iso','ISO:정기','현대해상일산 / 파주메디컬','이희윤',{isoType:'정기'}),
   mkEvent('e9','g9','2026-08-19','target','TARGET(건축):골조2차','시티오씨엘 7단지','신성근, 이정호, 박찬우',{discipline:'건축',className:'골조2차'}),
   mkEvent('e10','g10','2026-08-24','target','TARGET(건축):도장','광주센테니얼아이파크','이정호, 박정호',{discipline:'건축',className:'도장'}),
   mkEvent('e11','g11','2026-08-25','target','TARGET(기계):시스템','광주센테니얼','한진헌, 류지수',{discipline:'기계',className:'시스템'}),
-  mkEvent('e12','g12','2026-08-26','jeokgi','적기','송도역세권 부지조성','배춘호'),
+  mkEvent('e12','g12','2026-08-26','jeokgi','적기점검','송도역세권 부지조성','배춘호'),
   mkEvent('e13','g13','2026-08-26','iso','ISO:정기','송도역세권 부지조성','이희윤',{isoType:'정기'}),
   mkEvent('e14','g14','2026-08-27','target','TARGET(건축):골조1차','태화강센트럴','박정호, 박찬우',{discipline:'건축',className:'골조1차'}),
   mkEvent('e15','g15','2026-08-31','iso','ISO:정기','광주센테니얼아이파크','이희윤',{isoType:'정기'}),
@@ -2025,6 +2064,129 @@ function closeSiteModal(){
   detachMatrixListeners();
 }
 
+// ===== 연도별 집계 (2026-09-14) =====
+// "26년에 점검현장 총점검횟수, 점검별 집계를 현황판식으로 보고 싶다"는 요청 — 현재 화면 상단
+// 집계표(요약 카드)는 지금 열려있는 "한 달"의 EVENTS만 대상으로 하므로, 한 해(1~12월) 전체를
+// 따로 불러와서 똑같은 방식(카드 + 클릭하면 현장명 목록)으로 보여주는 별도 팝업을 둔다.
+let yearStatsYear = null;
+let yearStatsToken = 0; // 연도를 빠르게 바꿀 때 이전 로딩 결과가 늦게 도착해 화면을 덮어쓰는 것을 막는 용도
+function openYearStatsModal(){
+  document.getElementById('year-stats-modal-overlay').hidden = false;
+  yearStatsYear = REAL_TODAY.year;
+  loadAndRenderYearStats();
+}
+function closeYearStatsModal(){
+  document.getElementById('year-stats-modal-overlay').hidden = true;
+  hideStatTooltip();
+}
+function changeYearStatsYear(delta){
+  yearStatsYear += delta;
+  loadAndRenderYearStats();
+}
+// 지정한 연도(1~12월)의 모든 일정을 파이어베이스에서 그대로(가공 없이) 한 번에 모아온다.
+// 휴일 항목은 집계 대상이 아니므로 여기서 미리 제외한다.
+async function loadYearFlatEvents(year){
+  const months = matrixMonthRangeList(year, 1, year, 12);
+  const all = [];
+  for(const ym of months){
+    try{
+      const ctx = await getStateEvents(stateKeyFor(ym.year, ym.month));
+      matrixListFor(ctx).forEach(function(e){ if(e.cat !== 'holiday') all.push(e); });
+    }catch(err){ /* 그 달 못 불러오면(오프라인 등) 그냥 건너뜀 — 새로고침하면 다시 시도됨 */ }
+  }
+  return all;
+}
+async function loadAndRenderYearStats(){
+  const myToken = ++yearStatsToken;
+  const labelEl = document.getElementById('year-stats-year-label');
+  if(labelEl) labelEl.textContent = yearStatsYear + '년';
+  const loadingEl = document.getElementById('year-stats-loading');
+  if(loadingEl) loadingEl.textContent = '불러오는 중…';
+  const events = await loadYearFlatEvents(yearStatsYear);
+  if(myToken !== yearStatsToken) return; // 그 사이 다른 연도로 넘어갔으면 이 결과는 버림
+  if(loadingEl) loadingEl.textContent = '';
+  renderYearStatsCards(events);
+}
+// 위쪽 월별 집계표(updateAutoStats/buildCardsForCategory)와 최대한 같은 분류·라벨·단위 규칙을
+// 그대로 따라가되, 전역 EVENTS가 아니라 인자로 받은 임의의 이벤트 목록(그 해 전체)을 대상으로 한다.
+function computeYearStatCards(events){
+  const cards = [];
+  const tagItemFn = function(e){ return e.tag || null; };
+  const targetItemFn = function(e){ return e.className || null; };
+  const cfgList = getCategoryConfigList();
+  const targetCfg = cfgList.find(function(c){ return c.key === 'target'; });
+  if(targetCfg && targetCfg.enabled !== false){
+    const targetEvents = dedupeByGid(events.filter(function(e){ return e.cat === 'target'; }));
+    ['건축','기계','전기','토목'].forEach(function(d){
+      const evs = targetEvents.filter(function(e){
+        const disc = eventDiscipline(e);
+        if(d === '기계') return disc === '기계' || disc === '기/전';
+        if(d === '전기') return disc === '전기' || disc === '기/전';
+        return disc === d;
+      });
+      cards.push({ label:'TARGET 점검(' + d + ')', colorFg:targetCfg.colorFg, colorBg:targetCfg.colorBg, evs:evs, itemFn:targetItemFn, unit:'개 현장' });
+    });
+  }
+  cfgList.filter(function(c){ return c.enabled !== false && c.key !== 'target'; }).forEach(function(cfg){
+    const catEvents = dedupeByGid(events.filter(function(e){ return e.cat === cfg.key; }));
+    if(cfg.key === 'iso'){
+      const isoLabelMap = { '정기':'ISO 정기점검', '지원':'ISO 지원점검' };
+      getSubclasses('iso').forEach(function(it){
+        const evs = catEvents.filter(function(e){ return (e.isoType || e.subName || null) === it.name; });
+        cards.push({ label: isoLabelMap[it.name] || ('ISO ' + it.name + '점검'), colorFg:cfg.colorFg, colorBg:cfg.colorBg, evs:evs, itemFn:tagItemFn, unit:'개 현장' });
+      });
+      return;
+    }
+    if(cfg.hasSubclass){
+      if(cfg.grouped){
+        const groups = [];
+        getSubclasses(cfg.key).forEach(function(it){ if(it.group && groups.indexOf(it.group) === -1) groups.push(it.group); });
+        if(!groups.length) groups.push('분류없음');
+        groups.forEach(function(g){
+          const evs = catEvents.filter(function(e){ return (e.subGroup || null) === g; });
+          cards.push({ label:cfg.label + '(' + g + ')', colorFg:cfg.colorFg, colorBg:cfg.colorBg, evs:evs, itemFn:function(e){ return e.subName || null; }, unit:'개 현장' });
+        });
+      } else {
+        getSubclasses(cfg.key).forEach(function(it){
+          const evs = catEvents.filter(function(e){ return (e.subName || null) === it.name; });
+          cards.push({ label:cfg.label + ' ' + it.name, colorFg:cfg.colorFg, colorBg:cfg.colorBg, evs:evs, itemFn:tagItemFn, unit:'개 현장' });
+        });
+      }
+    } else {
+      cards.push({ label:cfg.label, colorFg:cfg.colorFg, colorBg:cfg.colorBg, evs:catEvents, itemFn:tagItemFn, unit: cfg.key === 'semina' ? '건' : '개 현장' });
+    }
+  });
+  return cards;
+}
+function renderYearStatsCards(events){
+  const wrap = document.getElementById('year-stats-summary');
+  if(!wrap) return;
+  wrap.innerHTML = '';
+  // 총점검횟수 카드 — 월별 집계표의 "점검현장 총계"와 같은 규칙(같은 gid=1건, TARGET 기/전은 2건)
+  const nonHoliday = dedupeByGid(events);
+  const siteSet = new Set();
+  let caseCount = 0;
+  nonHoliday.forEach(function(e){
+    const siteName = (e.site || '').trim();
+    if(siteName) siteSet.add(siteName);
+    if(e.cat === 'target' && eventDiscipline(e) === '기/전') caseCount += 2;
+    else caseCount += 1;
+  });
+  const totalCard = buildStatCardEl({ id:'year-stat-total', isTotal:true, label:yearStatsYear + '년 점검현장 총계', defaultText:'총 ' + siteSet.size + '개 현장 (' + caseCount + '건)' });
+  wrap.appendChild(totalCard);
+  setStatElTooltip(totalCard.querySelector('.value'), nonHoliday, tagItemFnForYearTotal);
+  // 점검별 집계 카드
+  computeYearStatCards(events).forEach(function(c, idx){
+    const el = buildStatCardEl({ id:'year-stat-' + idx, label:c.label, colorFg:c.colorFg, colorBg:c.colorBg, defaultText: c.evs.length + c.unit });
+    wrap.appendChild(el);
+    setStatElTooltip(el.querySelector('.value'), c.evs, c.itemFn);
+  });
+  // 재점검필요(NG)는 별도 카드로 안 두고(2026-09-14 사용자 요청: "따로 빼지 말고 점검현황 리스트에서
+  // 표현하는 게 낫다"), 위 각 카드를 클릭했을 때 뜨는 "현장명(점검명)" 목록 자체에 그 건이 NG였으면
+  // "⚠재점검필요 — 메모"가 바로 붙어서 나온다(buildStatTooltip에서 처리, 모든 카드 공통 적용).
+}
+function tagItemFnForYearTotal(e){ return e.tag || null; }
+
 // ===== 점검자 마스터 DB (이름 + 휴무일) =====
 const INSPECTORS_DEFAULT = [];
 let inspectorsRef = null;
@@ -2441,7 +2603,7 @@ const MATRIX_COLUMNS_ARCH_STATIC = [
   { key:'wanju', top:null, group:'준공점검', cat:'wanju', single:true,
     match:function(e){ return e.cat==='wanju'; },
     extra:function(){ return {}; },
-    tag:function(){ return '준공'; } },
+    tag:function(){ return labelForCat('wanju'); } },
   { key:'iso', top:null, group:'ISO', cat:'iso', single:true,
     // ISO는 정기/지원을 나누어 일정을 짜지만 지원은 매번 가는 게 아니므로, 매트릭스에서는 구분 없이 통합해서 본다.
     match:function(e){ return e.cat==='iso'; },
@@ -2450,17 +2612,19 @@ const MATRIX_COLUMNS_ARCH_STATIC = [
 ];
 const MATRIX_COLUMNS_INFRA_STATIC = [
   { key:'jeokgi', top:null, group:'적기점검', cat:'jeokgi', single:true, yearly:true,
-    // 2026-09-14: 인프라 현장은 짧게는 1년, 길게는 10년 넘게 이어지고 "1년에 최소 1회"가 기준이라,
+    // 2026-09-14: 인프라 현장은 짧게는 1년, 길게는 10년 넘게 이어지고 "1년에 최소 1번"이 원칙이라,
     // 예전처럼 1차/2차로 나누면 회차가 몇 년치 이력 중 어디에 들어가는지 애매해지는 문제가 있었다(사용자
     // 지적). 그래서 회차 구분 없이 jeokgi 카테고리 전체를 하나로 묶고, 셀 표시는 아래 buildMatrixCell의
     // yearly 처리로 "올해 안에 다녀왔는지"만 보여주며, 과거 전체 이력은 클릭하면 그대로 다 나온다.
+    // tag()는 하드코딩 대신 labelForCat()으로 "점검종류 관리"에 저장된 실제 라벨을 그대로 쓴다 — 캘린더에서
+    // 새 일정을 추가할 때(addEvent)도 같은 라벨을 쓰므로, 두 경로가 항상 같은 문구로 통일된다(2026-09-14).
     match:function(e){ return e.cat==='jeokgi'; },
     extra:function(){ return {}; },
-    tag:function(){ return '적기점검'; } },
+    tag:function(){ return labelForCat('jeokgi'); } },
   { key:'wanju', top:null, group:'준공점검', cat:'wanju', single:true,
     match:function(e){ return e.cat==='wanju'; },
     extra:function(){ return {}; },
-    tag:function(){ return '준공'; } },
+    tag:function(){ return labelForCat('wanju'); } },
   { key:'iso', top:null, group:'ISO', cat:'iso', single:true,
     match:function(e){ return e.cat==='iso'; },
     extra:function(){ return { isoType:'정기' }; },
@@ -2767,6 +2931,65 @@ async function runExcelImportOnce3(){
     console.log('[종합점검 이력 추가 반영] 추가 ' + added + '건 · 건너뜀(중복) ' + skippedDup + '건' + (failed ? (' · 실패 ' + failed + '건(다음에 다시 시도)') : ''));
   }catch(err){
     console.warn('종합점검 이력 추가 반영 중 오류:', err);
+  }
+}
+// ── 2026-09-14 M/H·적기점검 표시 이름 통일(1회성) ──────────────────────────
+// 문제: 캘린더에서 직접 "+"로 일정을 추가할 때는 "점검종류 관리"에 저장된 라벨(사용자가 예전에
+// "적기"로 줄여 부른 상태)을 그대로 태그로 쓰는데, "현장명 리스트" 매트릭스 칸에서 "캘린더로 이동해서
+// 채우기"로 넣을 때는 매트릭스 정적 컬럼에 하드코딩된 문구("적기점검")를 썼다 — 두 경로로 만든 일정의
+// 태그 문구가 서로 달라서 사용자가 "왜 통일이 안 되냐"고 지적함. 코드 쪽은 이미 labelForCat()으로
+// 두 경로가 항상 같은 라벨을 쓰도록 고쳤지만(위 MATRIX_COLUMNS_INFRA_STATIC/ARCH_STATIC 참고), 그것만으론
+// (a) "점검종류 관리"에 이미 저장되어 있는 예전 라벨("M/H", "토목적기"/"적기")과 (b) 그 라벨로 이미
+// 만들어져 있는 과거 일정 카드들의 태그 문구까지 저절로 바뀌진 않으므로, 아래에서 한 번만 실제 데이터를
+// 새 이름("M/H점검", "적기점검")으로 맞춰준다.
+const CATEGORY_LABEL_UNIFY_MAP = { mh:'M/H점검', jeokgi:'적기점검' };
+async function runCategoryLabelUnifyOnce(){
+  let markerRef = null;
+  try{
+    ensureFirebaseApp();
+    markerRef = firebase.database().ref('settings/labelUnifyDone');
+    const snap = await markerRef.once('value');
+    if(snap.val()) return;
+  }catch(err){ return; }
+  let updatedCats = 0, updatedEvents = 0, failedMonths = 0;
+  try{
+    // 1) "점검종류 관리"에 저장된 라벨 자체를 통일 — 집계표/매트릭스 그룹명/앞으로 캘린더에서 새로
+    //    추가하는 일정의 태그가 전부 이 라벨을 그대로 따라간다.
+    const catRef = firebase.database().ref('settings/categoryConfig');
+    const catSnap = await catRef.once('value');
+    let list = catSnap.val();
+    if(Array.isArray(list) && list.length){
+      let changed = false;
+      list = list.map(function(c){
+        const newLabel = CATEGORY_LABEL_UNIFY_MAP[c.key];
+        if(newLabel && c.label !== newLabel){ changed = true; updatedCats++; return Object.assign({}, c, { label:newLabel }); }
+        return c;
+      });
+      if(changed) await catRef.set(list);
+    }
+    // 2) 이미 만들어져 있는 M/H·적기점검 일정 카드들의 태그 문구도 새 이름으로 맞춘다. 이 두 점검종류는
+    //    세부분류가 없어서(hasSubclass:false) 태그가 항상 "카테고리 이름 그대로"이므로, cat 값만 보고
+    //    통째로 새 이름으로 바꿔도 안전하다(TARGET/ISO처럼 "TARGET(건축):골조1차" 같은 세부항목이 붙는
+    //    카테고리는 이 대상이 아님).
+    await new Promise(function(resolve){ loadMatrixData(resolve); });
+    const range = getMatrixScanRange();
+    for(const stateKey of range.months){
+      try{
+        const ctx = await getStateEvents(stateKey);
+        const list2 = matrixListFor(ctx);
+        let changedMonth = false;
+        list2.forEach(function(e){
+          const newLabel = CATEGORY_LABEL_UNIFY_MAP[e.cat];
+          if(newLabel && e.tag !== newLabel){ e.tag = newLabel; changedMonth = true; updatedEvents++; }
+        });
+        if(changedMonth) await saveStateEvents(ctx);
+      }catch(err){ failedMonths++; }
+    }
+    matrixRefreshAfterWrite();
+    if(!failedMonths && markerRef) await markerRef.set({ done:true, at:Date.now(), updatedCats:updatedCats, updatedEvents:updatedEvents });
+    console.log('[점검명 라벨 통일] 카테고리 ' + updatedCats + '개 · 일정 태그 ' + updatedEvents + '건 갱신' + (failedMonths ? (' · 실패 ' + failedMonths + '개월(다음에 다시 시도)') : ''));
+  }catch(err){
+    console.warn('점검명 라벨 통일 중 오류:', err);
   }
 }
 // 예전에 TARGET(건축) 하위분류로 잘못 끼워둔 "건축종합"이 남아있으면 정리한다.
@@ -4298,6 +4521,8 @@ document.addEventListener('keydown', function(e){
     if(clsOverlay && !clsOverlay.hidden) closeClsModal();
     const siteOverlay = document.getElementById('site-modal-overlay');
     if(siteOverlay && !siteOverlay.hidden) closeSiteModal();
+    const yearStatsOverlay = document.getElementById('year-stats-modal-overlay');
+    if(yearStatsOverlay && !yearStatsOverlay.hidden) closeYearStatsModal();
   }
 });
 
@@ -4969,6 +5194,19 @@ document.getElementById('site-modal-close').addEventListener('click', closeSiteM
 document.getElementById('site-modal-overlay').addEventListener('click', function(e){
   if(e.target === e.currentTarget) closeSiteModal();
 });
+document.getElementById('btn-year-stats').addEventListener('click', openYearStatsModal);
+document.getElementById('year-stats-modal-close').addEventListener('click', closeYearStatsModal);
+document.getElementById('year-stats-modal-overlay').addEventListener('click', function(e){
+  if(e.target === e.currentTarget) closeYearStatsModal();
+});
+document.getElementById('year-stats-prev').addEventListener('click', function(){ changeYearStatsYear(-1); });
+document.getElementById('year-stats-next').addEventListener('click', function(){ changeYearStatsYear(1); });
+// 카드 클릭 → 현장명 목록 툴팁 켜기/끄기(위쪽 월별 집계표와 동일한 방식 재사용)
+document.getElementById('year-stats-summary').addEventListener('click', function(e){
+  const card = e.target.closest('.stat.has-tooltip');
+  if(!card){ hideStatTooltip(); return; }
+  toggleStatTooltip(card);
+});
 (function(){
   const sortSelect = document.getElementById('matrix-sort-select');
   if(sortSelect){
@@ -5113,6 +5351,7 @@ initSitesSync();
 runExcelImportOnce();
 runExcelImportOnce2();
 runExcelImportOnce3();
+runCategoryLabelUnifyOnce();
 initInspectorsSync();
 initInspectorFilterUI();
 initNoticeSync();
