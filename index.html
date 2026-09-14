@@ -407,7 +407,13 @@
   }
   .cls-modal.site-modal-lg{ width:min(920px, 98vw); max-height:min(860px,94vh); max-height:min(860px,94dvh); }
   .cls-modal.site-modal-xl{ width:min(1400px, 98vw); max-height:min(900px,94vh); max-height:min(900px,94dvh); overflow-y:auto; }
-  @media (max-width:680px){
+  @media (max-width:680px), (max-height:600px){
+    /* 세로 폭이 좁은 경우(680px 이하)뿐 아니라, 가로로 눕혀서(랜드스케이프) 화면 "높이"가 낮아지는
+       경우(600px 이하)도 똑같이 문제가 된다 — 사파리 계열 브라우저는 "가운데 정렬 + 넘치는 내용
+       스크롤"을 같이 쓰면 위쪽으로 넘친 부분(예: 닫기 버튼)은 스크롤해도 끝내 닿지 않는 알려진 버그가
+       있어서, 폭 기준 미디어쿼리만으로는 가로 보기(width는 넓지만 height가 낮은 상황)를 못 잡았다.
+       그래서 너비뿐 아니라 높이 기준도 함께 걸어, 가로로 눕혀도 위쪽 정렬 방식으로 바뀌어 스크롤로
+       전부 닿을 수 있게 한다. */
     .cls-modal-overlay{ padding:10px; align-items:flex-start; }
     .cls-modal, .cls-modal.site-modal-lg, .cls-modal.site-modal-xl{ max-height:none; margin-top:6px; margin-bottom:6px; }
   }
