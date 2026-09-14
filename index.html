@@ -151,6 +151,9 @@
     font-size:11.5px; line-height:1.6; padding:8px 11px; border-radius:8px;
     box-shadow:0 8px 24px rgba(0,0,0,0.25); max-width:min(280px, 90vw);
     white-space:pre-line; word-break:break-word;
+    /* 2026-09-14: 연도별 집계처럼 목록이 100건 넘게 길어질 수 있어서, 화면 밖으로 넘치는 대신
+       세로 스크롤로 끝까지 볼 수 있게 높이 상한 + 스크롤을 줌 */
+    max-height:min(60vh, 420px); overflow-y:auto; overscroll-behavior:contain;
   }
   .stat-tooltip-box[hidden]{ display:none; }
   .stat-tooltip-line{ padding:1px 0; }
@@ -555,6 +558,8 @@
   .year-stats-yearnav button{ padding:4px 10px; border-radius:6px; border:1px solid var(--line); background:var(--card); cursor:pointer; font-size:13px; }
   .year-stats-yearnav button:hover{ background:#EEF1F5; }
   #year-stats-year-label{ font-size:15px; font-weight:700; min-width:64px; text-align:center; }
+  .year-stats-month-range{ margin-left:10px; font-size:12.5px; color:var(--muted); }
+  .year-stats-month-range select{ font-size:12.5px; padding:2px 4px; border-radius:5px; border:1px solid var(--line); }
   .year-stats-loading{ font-size:11.5px; color:var(--muted); }
   .year-stats-summary{ padding:10px 4px; }
   .mx-hist-ng{ display:inline-block; margin-left:6px; padding:2px 6px; border-radius:10px; font-size:10.5px; border:1px solid var(--line); color:var(--muted); cursor:pointer; user-select:none; white-space:nowrap; }
@@ -956,6 +961,10 @@
       <button type="button" id="year-stats-prev">◀</button>
       <span id="year-stats-year-label">2026년</span>
       <button type="button" id="year-stats-next">▶</button>
+      <span class="year-stats-month-range">
+        <select id="year-stats-start-month"></select>월 ~
+        <select id="year-stats-end-month"></select>월
+      </span>
       <span class="year-stats-loading" id="year-stats-loading"></span>
     </div>
     <div class="summary year-stats-summary" id="year-stats-summary"></div>
@@ -2139,10 +2148,32 @@ function closeSiteModal(){
 // 집계표(요약 카드)는 지금 열려있는 "한 달"의 EVENTS만 대상으로 하므로, 한 해(1~12월) 전체를
 // 따로 불러와서 똑같은 방식(카드 + 클릭하면 현장명 목록)으로 보여주는 별도 팝업을 둔다.
 let yearStatsYear = null;
+let yearStatsStartMonth = 1;
+let yearStatsEndMonth = 12;
 let yearStatsToken = 0; // 연도를 빠르게 바꿀 때 이전 로딩 결과가 늦게 도착해 화면을 덮어쓰는 것을 막는 용도
+// 2026-09-14: "8월까지만 보고 엑셀이랑 대조하고 싶다"는 요청으로 월 범위(시작월~종료월) 선택 추가.
+// 선택창을 매번 1~12로 채워두고, 팝업을 열 때마다 기본값(1~12, 전체)으로 리셋한다.
+function populateYearStatsMonthSelects(){
+  const startSel = document.getElementById('year-stats-start-month');
+  const endSel = document.getElementById('year-stats-end-month');
+  if(!startSel || !endSel) return;
+  [startSel, endSel].forEach(function(sel){
+    sel.innerHTML = '';
+    for(let m = 1; m <= 12; m++){
+      const opt = document.createElement('option');
+      opt.value = String(m); opt.textContent = String(m);
+      sel.appendChild(opt);
+    }
+  });
+  startSel.value = String(yearStatsStartMonth);
+  endSel.value = String(yearStatsEndMonth);
+}
 function openYearStatsModal(){
   document.getElementById('year-stats-modal-overlay').hidden = false;
   yearStatsYear = REAL_TODAY.year;
+  yearStatsStartMonth = 1;
+  yearStatsEndMonth = 12;
+  populateYearStatsMonthSelects();
   loadAndRenderYearStats();
 }
 function closeYearStatsModal(){
@@ -2151,12 +2182,28 @@ function closeYearStatsModal(){
 }
 function changeYearStatsYear(delta){
   yearStatsYear += delta;
+  // 연도를 넘기면 월 범위는 항상 전체(1~12월)로 되돌린다 — 부분 범위는 "지금 보고 있는 연도"에서
+  // 엑셀과 대조하려고 잠깐 쓰는 용도라, 다른 연도까지 그 값이 그대로 남아있으면 오히려 헷갈리기 쉽다.
+  yearStatsStartMonth = 1;
+  yearStatsEndMonth = 12;
+  populateYearStatsMonthSelects();
   loadAndRenderYearStats();
 }
-// 지정한 연도(1~12월)의 모든 일정을 파이어베이스에서 그대로(가공 없이) 한 번에 모아온다.
+function changeYearStatsMonthRange(){
+  const startSel = document.getElementById('year-stats-start-month');
+  const endSel = document.getElementById('year-stats-end-month');
+  if(!startSel || !endSel) return;
+  let s = parseInt(startSel.value, 10), e = parseInt(endSel.value, 10);
+  if(s > e){ e = s; endSel.value = String(e); } // 시작월이 종료월보다 뒤면 종료월을 시작월로 맞춰줌
+  yearStatsStartMonth = s;
+  yearStatsEndMonth = e;
+  loadAndRenderYearStats();
+}
+// 지정한 연도의 시작월~종료월 구간의 일정을 파이어베이스에서 그대로(가공 없이) 한 번에 모아온다.
 // 휴일 항목은 집계 대상이 아니므로 여기서 미리 제외한다.
-async function loadYearFlatEvents(year){
-  const months = matrixMonthRangeList(year, 1, year, 12);
+async function loadYearFlatEvents(year, startMonth, endMonth){
+  const sm = startMonth || 1, em = endMonth || 12;
+  const months = matrixMonthRangeList(year, sm, year, em);
   const all = [];
   for(const ym of months){
     try{
@@ -2176,8 +2223,8 @@ async function loadAndRenderYearStats(){
   if(labelEl) labelEl.textContent = yearStatsYear + '년';
   const loadingEl = document.getElementById('year-stats-loading');
   if(loadingEl) loadingEl.textContent = '불러오는 중…';
-  const events = await loadYearFlatEvents(yearStatsYear);
-  if(myToken !== yearStatsToken) return; // 그 사이 다른 연도로 넘어갔으면 이 결과는 버림
+  const events = await loadYearFlatEvents(yearStatsYear, yearStatsStartMonth, yearStatsEndMonth);
+  if(myToken !== yearStatsToken) return; // 그 사이 다른 연도/월범위로 넘어갔으면 이 결과는 버림
   if(loadingEl) loadingEl.textContent = '';
   renderYearStatsCards(events);
 }
@@ -2246,7 +2293,11 @@ function renderYearStatsCards(events){
     if(e.cat === 'target' && eventDiscipline(e) === '기/전') caseCount += 2;
     else caseCount += 1;
   });
-  const totalCard = buildStatCardEl({ id:'year-stat-total', isTotal:true, label:yearStatsYear + '년 점검현장 총계', defaultText:'총 ' + siteSet.size + '개 현장 (' + caseCount + '건)' });
+  // 월 범위가 전체(1~12월)가 아니면 카드 제목에도 "(3~8월)" 식으로 붙여서, 지금 보고 있는 게
+  // 그 해 전체가 아니라 일부 기간이라는 걸 헷갈리지 않게 표시한다.
+  const isFullYear = (yearStatsStartMonth === 1 && yearStatsEndMonth === 12);
+  const rangeSuffix = isFullYear ? '' : (' (' + yearStatsStartMonth + '~' + yearStatsEndMonth + '월)');
+  const totalCard = buildStatCardEl({ id:'year-stat-total', isTotal:true, label:yearStatsYear + '년 점검현장 총계' + rangeSuffix, defaultText:'총 ' + siteSet.size + '개 현장 (' + caseCount + '건)' });
   wrap.appendChild(totalCard);
   setStatElTooltip(totalCard.querySelector('.value'), nonHoliday, tagItemFnForYearTotal);
   // 점검별 집계 카드
@@ -3081,6 +3132,46 @@ async function runCategoryLabelUnifyOnce(){
     console.log('[점검명 라벨 통일] 카테고리 ' + updatedCats + '개 · 일정 태그 ' + updatedEvents + '건 갱신' + (failedMonths ? (' · 실패 ' + failedMonths + '개월(다음에 다시 시도)') : ''));
   }catch(err){
     console.warn('점검명 라벨 통일 중 오류:', err);
+  }
+}
+// 2026-09-14: "적기2차"처럼 예전 1차/2차 회차 구분이 붙어있던 시절(14차 재설계 이전)에 만들어진
+// 적기점검 일정들은, 그 회차 문구가 태그 안에 문자 그대로 저장되어 있어서 코드를 바꿔도 화면에는
+// 계속 "토목적기2차"/"적기2차" 식으로 남아있을 수 있다(15차 라벨 통일 마이그레이션이 스캔한 범위
+// 밖에 있었거나, 그 마이그레이션이 실행되기 전에 이미 굳어진 데이터일 수 있음). 인프라 현장은 이력이
+// 수년~10년 넘게 이어질 수 있어 범위를 넉넉히(현재 기준 -6년~+2년) 잡아서, cat이 jeokgi인 일정은
+// 태그 문구를 무조건 지금의 라벨("적기점검" 등)로 통일하고 예전에 남아있을 수 있는 subName(회차)도
+// 지워서, "2차"든 "3차"든 회차 표기 자체가 다시는 보이지 않게 한다.
+async function runJeokgiTagCleanupOnce(){
+  let markerRef = null;
+  try{
+    ensureFirebaseApp();
+    markerRef = firebase.database().ref('settings/jeokgiTagCleanupDone');
+    const snap = await markerRef.once('value');
+    if(snap.val()) return;
+  }catch(err){ return; }
+  let updatedEvents = 0, failedMonths = 0;
+  try{
+    const months = matrixMonthRangeList(REAL_TODAY.year - 6, 1, REAL_TODAY.year + 2, 12);
+    const keys = Array.from(new Set(months.map(function(ym){ return stateKeyFor(ym.year, ym.month); })));
+    for(const stateKey of keys){
+      try{
+        const ctx = await getStateEvents(stateKey);
+        const list = matrixListFor(ctx);
+        let changedMonth = false;
+        list.forEach(function(e){
+          if(e.cat !== 'jeokgi') return;
+          const correctTag = labelForCat('jeokgi');
+          if(e.tag !== correctTag){ e.tag = correctTag; changedMonth = true; updatedEvents++; }
+          if(e.subName){ e.subName = null; changedMonth = true; }
+        });
+        if(changedMonth) await saveStateEvents(ctx);
+      }catch(err){ failedMonths++; }
+    }
+    matrixRefreshAfterWrite();
+    if(!failedMonths && markerRef) await markerRef.set({ done:true, at:Date.now(), updatedEvents:updatedEvents });
+    console.log('[적기점검 회차 문구 정리] 일정 태그 ' + updatedEvents + '건 갱신' + (failedMonths ? (' · 실패 ' + failedMonths + '개월(다음에 다시 시도)') : ''));
+  }catch(err){
+    console.warn('적기점검 회차 문구 정리 중 오류:', err);
   }
 }
 // 예전에 TARGET(건축) 하위분류로 잘못 끼워둔 "건축종합"이 남아있으면 정리한다.
@@ -5296,6 +5387,8 @@ document.getElementById('year-stats-modal-overlay').addEventListener('click', fu
 });
 document.getElementById('year-stats-prev').addEventListener('click', function(){ changeYearStatsYear(-1); });
 document.getElementById('year-stats-next').addEventListener('click', function(){ changeYearStatsYear(1); });
+document.getElementById('year-stats-start-month').addEventListener('change', changeYearStatsMonthRange);
+document.getElementById('year-stats-end-month').addEventListener('change', changeYearStatsMonthRange);
 // 카드 클릭 → 현장명 목록 툴팁 켜기/끄기(위쪽 월별 집계표와 동일한 방식 재사용)
 document.getElementById('year-stats-summary').addEventListener('click', function(e){
   const card = e.target.closest('.stat.has-tooltip');
@@ -5447,6 +5540,7 @@ runExcelImportOnce();
 runExcelImportOnce2();
 runExcelImportOnce3();
 runCategoryLabelUnifyOnce();
+runJeokgiTagCleanupOnce();
 initInspectorsSync();
 initInspectorFilterUI();
 initNoticeSync();
