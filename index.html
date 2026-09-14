@@ -2964,30 +2964,37 @@ function renderMatrixSection(tableId, columns, siteEntries){
     if(i === 0) th.className = 'mx-site-h';
     row1.appendChild(th);
   });
-  const topGroups = [];
+  // 헤더를 "top이 있는 컬럼은 전부 먼저, 그다음 top 없는 컬럼"으로 뭉쳐서 그리면 실제 tbody 셀 순서
+  // (visibleCols 순서 — 자동생성 컬럼이 먼저 오도록 정한 그 순서)와 어긋나 버린다(2026-09-11 발견된 버그:
+  // 데이터는 M/H·초기점검이 먼저인데 헤더는 항상 TARGET이 먼저 그려져서 화면상 순서가 안 바뀐 것처럼
+  // 보였음). 그래서 top이 같은 "인접한" 컬럼끼리만 하나의 그룹으로 묶고, 나머지는 각자 독립된 세그먼트로
+  // 취급해서 visibleCols에 나온 순서 그대로 헤더를 그린다.
+  const headerSegments = [];
   visibleCols.forEach(function(col){
-    if(!col.top) return;
-    let g = topGroups.find(function(t){ return t.top === col.top; });
-    if(!g){ g = { top:col.top, cols:[] }; topGroups.push(g); }
-    g.cols.push(col);
+    const last = headerSegments[headerSegments.length - 1];
+    if(col.top && last && last.top === col.top){
+      last.cols.push(col);
+    } else {
+      headerSegments.push({ top: col.top || null, cols:[col] });
+    }
   });
-  topGroups.forEach(function(g){
+  headerSegments.forEach(function(seg){
     const th = document.createElement('th');
-    th.colSpan = g.cols.reduce(function(sum,c){ return sum + (c.items ? c.items.length : 1); }, 0);
-    th.textContent = g.top;
-    row1.appendChild(th);
-  });
-  visibleCols.filter(function(c){ return !c.top; }).forEach(function(col){
-    const th = document.createElement('th');
-    th.rowSpan = 3;
-    th.textContent = col.group;
+    if(seg.top){
+      th.colSpan = seg.cols.reduce(function(sum,c){ return sum + (c.items ? c.items.length : 1); }, 0);
+      th.textContent = seg.top;
+    } else {
+      th.rowSpan = 3;
+      th.textContent = seg.cols[0].group;
+    }
     row1.appendChild(th);
   });
   thead.appendChild(row1);
 
   const row2 = document.createElement('tr');
-  topGroups.forEach(function(g){
-    g.cols.forEach(function(col){
+  headerSegments.forEach(function(seg){
+    if(!seg.top) return;
+    seg.cols.forEach(function(col){
       const th = document.createElement('th');
       th.colSpan = col.items ? col.items.length : 1;
       th.textContent = col.group;
@@ -2997,8 +3004,9 @@ function renderMatrixSection(tableId, columns, siteEntries){
   thead.appendChild(row2);
 
   const row3 = document.createElement('tr');
-  topGroups.forEach(function(g){
-    g.cols.forEach(function(col){
+  headerSegments.forEach(function(seg){
+    if(!seg.top) return;
+    seg.cols.forEach(function(col){
       (col.items || [null]).forEach(function(item){
         const th = document.createElement('th');
         th.textContent = item || col.group;
