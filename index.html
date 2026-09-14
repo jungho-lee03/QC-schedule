@@ -543,6 +543,8 @@
   .matrix-table td.mx-cell{ position:relative; cursor:pointer; }
   .matrix-table td.mx-cell.done{ background:#E9F6EC; color:#1E5B33; font-weight:600; }
   .matrix-table td.mx-cell.empty{ background:var(--card); color:var(--muted); }
+  /* 과거(작년 이전)엔 다녀왔지만 올해는 아직 안 간 적기점검 — 완전 미실시(회색)와 구분되도록 옅은 경고색 처리 */
+  .matrix-table td.mx-cell.empty.yearly-overdue{ background:#FFF6E0; color:#8A6600; font-weight:600; }
   .matrix-table td.mx-cell.needs-recheck{ background:var(--ng-bg); color:var(--ng-fg); font-weight:700; border:2px solid var(--ng-fg); }
   .matrix-legend-note{ font-size:11px; color:var(--ng-fg); padding:2px 4px 6px; }
   .mx-hist-ng{ display:inline-block; margin-left:6px; padding:2px 6px; border-radius:10px; font-size:10.5px; border:1px solid var(--line); color:var(--muted); cursor:pointer; user-select:none; white-space:nowrap; }
@@ -2447,11 +2449,14 @@ const MATRIX_COLUMNS_ARCH_STATIC = [
     tag:function(){ return 'ISO:정기'; } }
 ];
 const MATRIX_COLUMNS_INFRA_STATIC = [
-  { key:'jeokgi', top:'적기점검', group:'적기점검', cat:'jeokgi', items:['1차','2차'],
-    // 예전부터 있던 토목적기 일정은 회차 구분이 없었으므로, 표기 없는 건 1차로 간주해서 보여준다.
-    match:function(e,item){ return e.cat==='jeokgi' && (e.subName===item || (!e.subName && item==='1차')); },
-    extra:function(item){ return { subName:item }; },
-    tag:function(item){ return '토목적기:' + item; } },
+  { key:'jeokgi', top:null, group:'적기점검', cat:'jeokgi', single:true, yearly:true,
+    // 2026-09-14: 인프라 현장은 짧게는 1년, 길게는 10년 넘게 이어지고 "1년에 최소 1회"가 기준이라,
+    // 예전처럼 1차/2차로 나누면 회차가 몇 년치 이력 중 어디에 들어가는지 애매해지는 문제가 있었다(사용자
+    // 지적). 그래서 회차 구분 없이 jeokgi 카테고리 전체를 하나로 묶고, 셀 표시는 아래 buildMatrixCell의
+    // yearly 처리로 "올해 안에 다녀왔는지"만 보여주며, 과거 전체 이력은 클릭하면 그대로 다 나온다.
+    match:function(e){ return e.cat==='jeokgi'; },
+    extra:function(){ return {}; },
+    tag:function(){ return '적기점검'; } },
   { key:'wanju', top:null, group:'준공점검', cat:'wanju', single:true,
     match:function(e){ return e.cat==='wanju'; },
     extra:function(){ return {}; },
@@ -3231,7 +3236,14 @@ function buildMatrixCell(siteName, col, item){
   const td = document.createElement('td');
   td.className = 'mx-cell';
   const matches = matrixMatchesFor(siteName, col, item);
-  const latest = pickLatestMatch(matches);
+  // col.yearly(예: 인프라 적기점검): "올해 다녀왔는지"만 칸에 보여준다 — 작년 이전 이력이 있어도
+  // 금년도 이력이 없으면 칸은 '-'로 표시하고(재점검 필요를 놓치지 않도록), 과거 전체 이력은 클릭하면
+  // matches(연도 필터 없음)로 그대로 다 보인다.
+  const cellMatches = col.yearly
+    ? matches.filter(function(m){ return m.date && m.date.slice(0,4) === String(REAL_TODAY.year); })
+    : matches;
+  const latest = pickLatestMatch(cellMatches);
+  const hasPastHistory = col.yearly && !latest && matches.length > 0;
   if(latest){
     td.classList.add('done');
     if(latest.needsRecheck){
@@ -3242,6 +3254,7 @@ function buildMatrixCell(siteName, col, item){
     }
   } else {
     td.classList.add('empty');
+    if(hasPastHistory) td.classList.add('yearly-overdue');
     td.textContent = '-';
   }
   // 커서를 올리면(hover) 이 항목의 전체 이력(1차/2차/... 날짜 + 메모)을 바로 볼 수 있게,
@@ -3253,6 +3266,7 @@ function buildMatrixCell(siteName, col, item){
       if(m.note) line += ' — ' + m.note;
       return line;
     });
+    if(hasPastHistory) lines.unshift('※ ' + REAL_TODAY.year + '년도 미실시 (과거 이력만 있음)');
     td.title = lines.join('\n') + '\n\n클릭해서 이력 보기 · 추가/수정';
   } else {
     td.title = '클릭해서 점검 이력 보기 · 추가';
@@ -4139,7 +4153,21 @@ function render(){
           if(!src) return;
           const newDate = addDays(src.date, offset);
           if(!isValidKey(newDate)) return;
-          EVENTS.push(mkEvent(newId(), src.gid, newDate, src.cat, src.tag, src.site, src.people));
+          // TARGET/ISO/적기점검처럼 discipline·className·isoType·subName 같은 세부분류 값을 쓰는
+          // 점검을 Ctrl+드래그로 복사(=여러 날짜짜리 점검 만들기)할 때 이 값들을 안 옮기면, 복사된
+          // 날짜는 매트릭스에서 그 세부항목과 매칭이 안 되거나(TARGET) 엉뚱하게 기본값(적기점검 "1차")으로
+          // 잘못 잡히는 문제가 있었다(2026-09-14 발견) — 원본의 세부분류 값을 그대로 복사해서 옮긴다.
+          const extraClean = JSON.parse(JSON.stringify({
+            isRecheck: src.isRecheck,
+            needsRecheck: src.needsRecheck,
+            discipline: src.discipline,
+            className: src.className,
+            isoType: src.isoType,
+            subName: src.subName,
+            subGroup: src.subGroup,
+            note: src.note
+          }));
+          EVENTS.push(mkEvent(newId(), src.gid, newDate, src.cat, src.tag, src.site, src.people, extraClean));
         });
       } else {
         dragCtx.ids.forEach(id=>{
