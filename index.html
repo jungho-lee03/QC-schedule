@@ -595,6 +595,12 @@
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   }
   .site-suggest-item:hover, .site-suggest-item.active{ background:var(--paper); }
+  .deleted-sites-list{ display:flex; flex-direction:column; gap:4px; }
+  .deleted-site-row{
+    display:flex; align-items:center; gap:8px; padding:6px 10px;
+    background:#F8F9FB; border:0.5px solid var(--line); border-radius:6px; font-size:12px; color:var(--muted);
+  }
+  .deleted-site-name{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
   .legend{ display:flex; flex-wrap:wrap; gap:14px; padding:14px 32px 22px; font-size:12px; color:var(--muted); border-top:0.5px solid var(--line); }
   .legend .item{ display:flex; align-items:center; gap:6px; }
@@ -919,6 +925,10 @@
     </div>
 
     <div class="cls-manage-heading" style="margin-top:8px;">칸에는 금일 기준 가장 최근 점검일만 표시됩니다(아직 없으면 -). 칸을 클릭하면 전체 점검 이력을 보고 추가·수정·삭제할 수 있습니다. (재)로 표시된 건 재점검입니다.</div>
+    <div class="deleted-sites-wrap" id="deleted-sites-wrap" hidden>
+      <div class="cls-manage-heading" style="margin-top:14px;">삭제된 현장 (복원 가능)</div>
+      <div class="deleted-sites-list" id="deleted-sites-list"></div>
+    </div>
   </div>
 </div>
 <datalist id="site-master-datalist"></datalist>
@@ -1271,6 +1281,9 @@ function updateAutoStats(){
   const jonghapEl = document.getElementById('stat-jonghap');
   const specialEl = document.getElementById('stat-special');
   const targetItemFn = function(e){ return e.className || null; };
+  // TARGET처럼 "현장명(점검명)" 형태로 통일해서 보여주기 위한 기본 itemFn — 세부분류가 따로 없는
+  // 점검종류는 실제 카드에 찍힌 태그 글자(보통 점검종류 라벨과 같지만, 직접 고쳤다면 그 글자)를 보여준다.
+  const tagItemFn = function(e){ return e.tag || null; };
   if(archEl) archEl.textContent = archEvents.length + '개 현장';
   setStatElTooltip(archEl, archEvents, targetItemFn);
   if(mechEl) mechEl.textContent = mechEvents.length + '개 현장';
@@ -1280,11 +1293,30 @@ function updateAutoStats(){
   if(tomokEl) tomokEl.textContent = tomokEvents.length + '개 현장';
   setStatElTooltip(tomokEl, tomokEvents, targetItemFn);
   if(wanjuEl) wanjuEl.textContent = wanjuEvents.length + '개 현장';
-  setStatElTooltip(wanjuEl, wanjuEvents, null);
+  setStatElTooltip(wanjuEl, wanjuEvents, tagItemFn);
   if(jonghapEl) jonghapEl.textContent = jonghapEvents.length + '개 현장';
-  setStatElTooltip(jonghapEl, jonghapEvents, null);
+  setStatElTooltip(jonghapEl, jonghapEvents, tagItemFn);
   if(specialEl) specialEl.textContent = specialEvents.length + '개 현장';
-  setStatElTooltip(specialEl, specialEvents, null);
+  setStatElTooltip(specialEl, specialEvents, tagItemFn);
+  // ISO는 카드 자체는 정기/지원 등 세부유형별로 나뉘어 있지만(집계 숫자는 별도 로직 없이 그대로 유지),
+  // 클릭했을 때 "현장명(점검명)" 목록만큼은 다른 항목들과 똑같이 보이도록 유형별로 붙여준다.
+  const isoEvents = dedupeByGid(EVENTS.filter(e => e.cat === 'iso'));
+  const isoIdMap = { '정기':'stat-iso', '지원':'stat-iso-support' };
+  getSubclasses('iso').forEach(function(it, idx){
+    const id = isoIdMap[it.name] || ('stat-iso-' + idx);
+    const el = document.getElementById(id);
+    const evs = isoEvents.filter(e => (e.isoType || e.subName || null) === it.name);
+    setStatElTooltip(el, evs, tagItemFn);
+  });
+  // M/H·토목적기·세미나는 숫자는 지금처럼 직접 입력하는 수동 카드로 두되(자동집계 방식을 바꾸는 건
+  // 별개 문제이므로 손대지 않음), 클릭하면 다른 항목들과 동일하게 실제 일정 목록은 보이도록 함.
+  ['mh','jeokgi','semina'].forEach(function(key){
+    const cfg = getCategoryConfigList().find(c => c.key === key);
+    if(!cfg || cfg.enabled === false) return;
+    const el = document.getElementById('stat-' + key);
+    const evs = dedupeByGid(EVENTS.filter(e => e.cat === key));
+    setStatElTooltip(el, evs, tagItemFn);
+  });
   // 새로 추가한 점검종류 중 "자동집계"를 쓰는 항목은 여기서 범용적으로 계산
   getCategoryConfigList().filter(c => c.enabled && c.autoCount && AUTO_STAT_HANDLED_KEYS.indexOf(c.key) === -1).forEach(cfg=>{
     const catEvents = dedupeByGid(EVENTS.filter(e => e.cat === cfg.key));
@@ -1303,13 +1335,13 @@ function updateAutoStats(){
           const evs = catEvents.filter(e => (e.subName || null) === it.name);
           const el = document.getElementById('stat-' + cfg.key + '-' + idx);
           if(el) el.textContent = evs.length + '개 현장';
-          setStatElTooltip(el, evs, null);
+          setStatElTooltip(el, evs, tagItemFn);
         });
       }
     } else {
       const el = document.getElementById('stat-' + cfg.key);
       if(el) el.textContent = catEvents.length + '개 현장';
-      setStatElTooltip(el, catEvents, null);
+      setStatElTooltip(el, catEvents, tagItemFn);
     }
   });
   updateRecheckNote();
@@ -1906,7 +1938,7 @@ function updateSiteDatalist(){
   const dl = document.getElementById('site-master-datalist');
   if(!dl) return;
   dl.innerHTML = '';
-  getSites().forEach(s=>{
+  getSites().filter(s=>s.enabled !== false).slice().sort((a,b)=> (a.name||'').localeCompare(b.name||'', 'ko')).forEach(s=>{
     const opt = document.createElement('option');
     opt.value = s.name;
     dl.appendChild(opt);
@@ -1935,11 +1967,12 @@ function attachSiteAutocomplete(inputEl, seg){
   }
   function openDropdown(filterByCurrentText){
     closeDropdown();
-    const names = Array.from(new Set(getSites().map(s=>s.name).filter(Boolean)));
+    const names = Array.from(new Set(getSites().filter(s=>s.enabled !== false).map(s=>s.name).filter(Boolean)))
+      .sort((a,b)=> a.localeCompare(b, 'ko'));
     // 처음 열 때(클릭/포커스)는 이미 입력된 현장명과 마스터DB 표기가 정확히 일치하지 않아도
-    // 전체 목록을 보여주고, 실제로 타이핑을 시작했을 때만 그 글자로 필터링한다.
+    // 전체 목록을 가나다순으로 보여주고, 실제로 타이핑을 시작했을 때만 그 글자로 필터링한다.
     const query = filterByCurrentText ? inputEl.value.trim().toLowerCase() : '';
-    const matches = (query ? names.filter(n=>n.toLowerCase().includes(query)) : names).slice(0,20);
+    const matches = query ? names.filter(n=>n.toLowerCase().includes(query)) : names;
     if(!matches.length) return;
     dropdownEl = document.createElement('div');
     dropdownEl.className = 'site-suggest';
@@ -2303,6 +2336,61 @@ function sendEventToTargetMonth(dateStr){
   }).catch(function(err){
     console.error('일정 다른 달로 보내기 실패:', err);
     alert('전송에 실패했습니다. 네트워크 상태를 확인하고 다시 시도해주세요.' + (err && err.message ? ('\n(' + err.message + ')') : ''));
+  });
+}
+
+// 일정을 "옮기지" 않고 다음 달의 특정 날짜(보통 1일)에도 그대로 추가해준다 — 월 경계를 넘는
+// 여러 날짜짜리 점검(예: 9/30~10/1)을 이번 달 화면에서 한 번만 조작해도 다음 달 달력에 자동으로
+// 나타나게 하기 위함. "다음달로 보내기"(sendEventToTargetMonth)와 달리 원본은 그대로 남는다.
+function extendEventToNextMonth(seg, targetDateStr){
+  const sample = seg.sample;
+  const targetYear = parseInt(targetDateStr.slice(0,4), 10);
+  const targetMonth = parseInt(targetDateStr.slice(5,7), 10);
+  const key = stateKeyFor(targetYear, targetMonth);
+  let fb;
+  try{ ensureFirebaseApp(); fb = firebase.database().ref(key); }catch(err){ fb = null; }
+  if(!fb){
+    alert('다음 달로 이어서 등록하려면 인터넷(파이어베이스) 연결이 필요합니다. 연결 상태를 확인해주세요.');
+    return;
+  }
+  fb.once('value').then(function(snapshot){
+    const data = snapshot.val() || {};
+    const events = Array.isArray(data.events) ? data.events.slice() : [];
+    const already = events.some(function(e){
+      return e.cat === sample.cat && (e.site || '').trim() === (sample.site || '').trim() && e.date === targetDateStr;
+    });
+    if(already){
+      alert(targetDateStr + '에는 이미 같은 현장·점검명으로 등록된 일정이 있어서, 추가하지 않았습니다.');
+      return null;
+    }
+    let idCtr = typeof data.idCounter === 'number' ? data.idCounter : 1;
+    let gidCtr = typeof data.gidCounter === 'number' ? data.gidCounter : 1;
+    const extraClean = JSON.parse(JSON.stringify({
+      isRecheck: sample.isRecheck,
+      needsRecheck: sample.needsRecheck,
+      discipline: sample.discipline,
+      className: sample.className,
+      isoType: sample.isoType,
+      subName: sample.subName,
+      note: sample.note
+    }));
+    const newEvent = mkEvent(
+      'e' + (idCtr++), 'g' + (gidCtr++), targetDateStr, sample.cat, sample.tag, sample.site, sample.people,
+      extraClean
+    );
+    events.push(newEvent);
+    data.events = events;
+    data.idCounter = idCtr;
+    data.gidCounter = gidCtr;
+    data.updatedAt = Date.now();
+    return fb.set(data).then(function(){ return true; });
+  }).then(function(result){
+    if(result === true){
+      alert(targetDateStr + ' (' + targetYear + '년 ' + targetMonth + '월)에도 이 일정을 추가했습니다. 이 달의 일정은 그대로 남아있습니다.');
+    }
+  }).catch(function(err){
+    console.error('다음 달로 이어서 등록 실패:', err);
+    alert('추가에 실패했습니다. 네트워크 상태를 확인하고 다시 시도해주세요.' + (err && err.message ? ('\n(' + err.message + ')') : ''));
   });
 }
 
@@ -2877,7 +2965,7 @@ function buildEditableInfoTd(site, idx, field, onDelete){
       const delBtn = document.createElement('span');
       delBtn.className = 'mx-del-btn';
       delBtn.textContent = '×';
-      delBtn.title = '현장 삭제(기존 일정 데이터는 남습니다)';
+      delBtn.title = '현장 삭제(기존 일정 데이터는 남고, 나중에 복원할 수 있습니다)';
       delBtn.onclick = onDelete;
       td.appendChild(delBtn);
     }
@@ -3249,9 +3337,10 @@ function renderMatrixSection(tableId, columns, siteEntries){
     const site = entry.site, idx = entry.idx;
     const tr = document.createElement('tr');
     tr.appendChild(buildEditableInfoTd(site, idx, 'name', function(){
-      if(!confirm(site.name + ' 현장을 목록에서 삭제할까요? (달력에 이미 입력된 일정은 그대로 남습니다)')) return;
+      if(!confirm(site.name + ' 현장을 목록에서 삭제할까요? (달력에 이미 입력된 일정은 그대로 남고, 아래 "삭제된 현장" 목록에서 나중에 복원할 수 있습니다)')) return;
       const sites = getSites().slice();
-      sites.splice(idx,1);
+      if(!sites[idx]) return;
+      sites[idx] = Object.assign({}, sites[idx], { enabled:false });
       setSites(sites);
       renderSiteMatrix();
     }));
@@ -3291,17 +3380,60 @@ function renderSiteMatrix(){
   removeBuildingComprehensiveClassIfPresent();
   renderMatrixFilter();
   const sites = getSites();
-  const archEntries = [], infraEntries = [];
+  const archEntries = [], infraEntries = [], deletedEntries = [];
   sites.forEach(function(s, idx){
+    if(s.enabled === false){ deletedEntries.push({ site:s, idx:idx }); return; }
     if(s.category === '인프라') infraEntries.push({ site:s, idx:idx });
     else archEntries.push({ site:s, idx:idx });
   });
   renderMatrixSection('matrix-table-arch', getMatrixColumnsArch(), sortSiteEntries(archEntries));
   renderMatrixSection('matrix-table-infra', getMatrixColumnsInfra(), sortSiteEntries(infraEntries));
+  renderDeletedSitesList(deletedEntries);
   const sortSelectEl = document.getElementById('matrix-sort-select');
   if(sortSelectEl && sortSelectEl.value !== matrixSortMode) sortSelectEl.value = matrixSortMode;
   const statusEl = document.getElementById('matrix-status');
   if(statusEl) statusEl.textContent = matrixLoading ? '불러오는 중…' : (matrixStatusLabel() + ' · ' + new Date().toLocaleTimeString('ko-KR') + ' 갱신(실시간)');
+}
+// 삭제(숨김)된 현장 목록 — 표에는 안 나오지만 여기서 복원하거나(다시 표에 나타남) 완전히 지울 수 있음(되돌리기 불가)
+function renderDeletedSitesList(entries){
+  const wrap = document.getElementById('deleted-sites-wrap');
+  const list = document.getElementById('deleted-sites-list');
+  if(!wrap || !list) return;
+  list.innerHTML = '';
+  if(!entries.length){ wrap.hidden = true; return; }
+  wrap.hidden = false;
+  entries.slice().sort(function(a,b){ return (a.site.name||'').localeCompare(b.site.name||'', 'ko'); }).forEach(function(entry){
+    const site = entry.site, idx = entry.idx;
+    const row = document.createElement('div');
+    row.className = 'deleted-site-row';
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'deleted-site-name';
+    nameSpan.textContent = (site.name || '(이름 없음)') + ' · ' + (site.category === '인프라' ? '인프라' : '건축');
+    row.appendChild(nameSpan);
+    const restoreBtn = document.createElement('button');
+    restoreBtn.type = 'button'; restoreBtn.className = 'site-row-btn'; restoreBtn.textContent = '복원';
+    restoreBtn.title = '현장별 점검 현황 표에 다시 나타나게 합니다';
+    restoreBtn.onclick = function(){
+      const sites2 = getSites().slice();
+      if(!sites2[idx]) return;
+      sites2[idx] = Object.assign({}, sites2[idx], { enabled:true });
+      setSites(sites2);
+      renderSiteMatrix();
+    };
+    row.appendChild(restoreBtn);
+    const purgeBtn = document.createElement('button');
+    purgeBtn.type = 'button'; purgeBtn.className = 'site-row-btn site-row-del'; purgeBtn.textContent = '완전삭제';
+    purgeBtn.title = '목록에서 완전히 삭제합니다 — 되돌릴 수 없습니다(달력에 이미 입력된 일정은 그대로 남습니다)';
+    purgeBtn.onclick = function(){
+      if(!confirm(site.name + ' 현장을 목록에서 완전히 삭제할까요?\n이 작업은 되돌릴 수 없습니다. (달력에 이미 입력된 일정은 그대로 남습니다)')) return;
+      const sites2 = getSites().slice();
+      sites2.splice(idx,1);
+      setSites(sites2);
+      renderSiteMatrix();
+    };
+    row.appendChild(purgeBtn);
+    list.appendChild(row);
+  });
 }
 function bindSiteAddRow(suffix, category){
   const btn = document.getElementById('site-add-btn-' + suffix);
@@ -3746,6 +3878,25 @@ function buildEventEl(seg){
     carryLink.addEventListener('dragstart', (ev)=>{ ev.preventDefault(); ev.stopPropagation(); });
     carryLink.addEventListener('click', (ev)=>{ ev.stopPropagation(); openCarryModal(seg); });
     box.appendChild(carryLink);
+
+    // 이 일정의 (이 세그먼트 기준) 마지막 날짜가 지금 보고 있는 달의 마지막 날이면 —
+    // 즉 "9/30, 10/1"처럼 다음 달로 바로 이어지는 경우 — 다음 달 1일에도 같은 일정을 자동으로
+    // 만들어주는 버튼을 보여준다(원본은 그대로 두고 다음 달에도 추가하는 것 — "다음달로 보내기"와는
+    // 다르게 이동이 아니라 이어붙이기).
+    const lastEvForSpan = EVENTS.find(x=>x.id === seg.ids[seg.ids.length-1]);
+    const lastDateOfSeg = lastEvForSpan ? lastEvForSpan.date : seg.sample.date;
+    const nextDayDate = addDays(lastDateOfSeg, 1);
+    if(nextDayDate.slice(0,7) !== lastDateOfSeg.slice(0,7)){
+      const extendLink = document.createElement('div');
+      extendLink.className = 'carry-link';
+      extendLink.textContent = '▸ 다음달 1일로 이어서 등록';
+      extendLink.title = '이 일정을 그대로 다음 달 1일에도 추가합니다(이 달의 일정은 그대로 남습니다). 이어서 더 늘리려면 다음 달 화면에서 평소처럼 날짜를 옮기거나 드래그하면 됩니다.';
+      extendLink.draggable = false;
+      extendLink.addEventListener('mousedown', (ev)=>{ ev.stopPropagation(); });
+      extendLink.addEventListener('dragstart', (ev)=>{ ev.preventDefault(); ev.stopPropagation(); });
+      extendLink.addEventListener('click', (ev)=>{ ev.stopPropagation(); extendEventToNextMonth(seg, nextDayDate); });
+      box.appendChild(extendLink);
+    }
   }
 
   if(seg.span > 1){
