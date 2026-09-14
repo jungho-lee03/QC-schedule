@@ -1241,11 +1241,19 @@ function eventDiscipline(e){
 // 같은 점검(gid)이 여러 날짜에 걸쳐 있어도(예: 15~16일 이틀짜리 M/H점검) 실제로는 1건이므로
 // 집계할 때는 gid 기준으로 한 번만 센다.
 function dedupeByGid(events){
+  // gid는 달마다 1부터 다시 세는 "그 달 안에서만" 고유한 값이라(예: 1월도 g1, g2..., 9월도 g1, g2...),
+  // 여러 달을 한꺼번에 모아놓은 목록(연도별 집계 등)에 그냥 gid만으로 dedup하면 서로 다른 달의
+  // 이벤트가 같은 gid라는 이유만으로 잘못 하나로 합쳐져 버린다(2026-09-14 발견 — 연도별 집계 총건수가
+  // 실제보다 훨씬 적게 나온 원인). 이벤트에 _stateKey(그 이벤트가 속한 연-월 키)가 실려 있으면
+  // "그 달 키 + gid"를 기준으로 구분해서, 같은 달 안의 같은 gid(다일 점검)만 하나로 묶고 다른 달의
+  // 같은 번호 gid는 별개로 취급한다. _stateKey가 없는 경우(이번 달 EVENTS처럼 원래 한 달치만 다룰 때)는
+  // 기존과 동일하게 gid만으로 구분한다.
   const seen = new Set();
   const result = [];
   events.forEach(e=>{
-    if(seen.has(e.gid)) return;
-    seen.add(e.gid);
+    const key = (e._stateKey || '') + '|' + e.gid;
+    if(seen.has(key)) return;
+    seen.add(key);
     result.push(e);
   });
   return result;
@@ -2152,8 +2160,12 @@ async function loadYearFlatEvents(year){
   const all = [];
   for(const ym of months){
     try{
-      const ctx = await getStateEvents(stateKeyFor(ym.year, ym.month));
-      matrixListFor(ctx).forEach(function(e){ if(e.cat !== 'holiday') all.push(e); });
+      const key = stateKeyFor(ym.year, ym.month);
+      const ctx = await getStateEvents(key);
+      // dedupeByGid가 달을 구분할 수 있도록 각 이벤트에 그 달의 키를 실어둔다(위 dedupeByGid 참고) —
+      // 안 그러면 서로 다른 달의 g1, g2...가 같은 번호라는 이유로 하나로 뭉개져서 연도 집계가
+      // 실제보다 훨씬 적게 나온다.
+      matrixListFor(ctx).forEach(function(e){ if(e.cat !== 'holiday') all.push(Object.assign({}, e, { _stateKey:key })); });
     }catch(err){ /* 그 달 못 불러오면(오프라인 등) 그냥 건너뜀 — 새로고침하면 다시 시도됨 */ }
   }
   return all;
@@ -2254,7 +2266,7 @@ function renderYearStatsCards(events){
   recheckCard.style.borderLeftColor = '#7A1F1F';
   recheckCard.style.background = '#FBE7E7';
   const recheckLabel = document.createElement('div');
-  recheckLabel.className = 'label'; recheckLabel.style.color = '#7A1F1F'; recheckLabel.textContent = '재점검 집계';
+  recheckLabel.className = 'label'; recheckLabel.style.color = '#7A1F1F'; recheckLabel.textContent = '재점검 집계(단일집계에 반영됨)';
   const recheckValue = document.createElement('div');
   recheckValue.className = 'value'; recheckValue.id = 'year-stat-recheck';
   recheckValue.textContent = recheckLines.length + '건';
@@ -3214,9 +3226,13 @@ function matrixMatchesFor(siteName, col, item){
   // 등)만 세부분류 매칭 방식 차이 때문에 우연히 날짜별로 다 따로 잡혀서 두 쪽이 서로 다르게
   // 보였는데, 이제 전체적으로 "같은 gid는 마지막 날짜 하나만" 규칙으로 통일한다 — 즉 이력에는
   // gid 하나당 1건(그 안에서 가장 늦은 날짜)만 남는다.
+  // gid는 달마다 1부터 다시 세는 값이라(dedupeByGid 주석 참고) 여러 달을 함께 스캔하는 매트릭스에서도
+  // 그냥 gid만 쓰면 다른 달의 우연히 같은 번호(g1, g2...)끼리 잘못 하나로 묶일 수 있다 — 그 이벤트가
+  // 속한 달 키(_stateKey, loadMatrixData에서 이미 실어둠)까지 같이 묶어서 진짜 같은 방문(같은 달,
+  // 같은 gid)만 하나로 합친다.
   const byGid = {};
   rawMatches.forEach(function(m){
-    const key = m.gid || ('__id_' + m.id);
+    const key = (m._stateKey || '') + '|' + (m.gid || ('__id_' + m.id));
     if(!byGid[key] || (m.date||'') > (byGid[key].date||'')) byGid[key] = m;
   });
   const matches = Object.keys(byGid).map(function(key){ return byGid[key]; });
