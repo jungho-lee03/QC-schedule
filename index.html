@@ -153,6 +153,10 @@
     white-space:pre-line; word-break:break-word;
   }
   .stat-tooltip-box[hidden]{ display:none; }
+  .stat-tooltip-line{ padding:1px 0; }
+  .stat-tooltip-line.has-ng{ cursor:pointer; text-decoration:underline dotted rgba(255,255,255,0.6); }
+  .stat-tooltip-line.has-ng:hover{ opacity:0.85; }
+  .stat-tooltip-reason{ font-size:10.5px; color:#FFD9A0; padding:2px 0 4px 10px; white-space:pre-wrap; }
   @media (max-width:680px){
     .summary{ grid-template-columns:repeat(2,1fr); }
     .stat.total{ grid-column:span 2; }
@@ -1251,35 +1255,89 @@ const AUTO_STAT_HANDLED_KEYS = ['target','wanju','jonghap','special','mh','jeokg
 // 현황판 카드를 클릭하면 어떤 현장이 잡혀 있는지 볼 수 있도록, 세부항목이 여러 개 합쳐진 카드는
 // "현장명(항목명)" 형태로, 단일항목 카드는 현장명만 한 줄씩(세로로) 정리해서 작은 말풍선(툴팁 박스)으로 보여준다.
 // (마우스 커서 올리기(hover)는 카드 빈 공간에서 잘 안 뜨고 불편해서, 클릭으로 켜고 끄는 방식으로 바꿈)
-function buildStatTooltip(events, itemFn){
-  const lines = dedupeByGid(events).map(function(e){
-    const site = (e.site || '').trim() || '현장명 미입력';
-    const item = itemFn ? itemFn(e) : null;
-    let line = item ? (site + '(' + item + ')') : site;
-    // "현장명 리스트"(매트릭스 이력)에서 재점검필요(NG)로 표시해둔 건이면, 별도 카드로 분리하지 않고
-    // 이 목록 자체에 바로 표시한다(2026-09-14 사용자 요청) — 메모(사유)를 적어뒀으면 함께 보여줌.
-    if(e.needsRecheck){
-      line += ' ⚠재점검필요';
-      if(e.note) line += ' — ' + e.note;
-    }
-    return line;
+// 같은 현장 + 같은 항목(예: 같은 현장에 같은 적기점검)이 이 목록 범위 안에서 두 번 이상 나오면
+// (2026-09-14 사용자 확정): 현장명 기준으로 정렬해서 몇 번 갔든 그 횟수만큼 다 보여주되, 두 번째부터는
+// "(재)"를 붙인다. ISO는 재점검이라는 개념이 없으므로 "(재)" 표시 없이 그냥 방문 횟수만큼 나열한다.
+// "(재)" 항목은 클릭하면, 바로 그 직전 방문(같은 현장·같은 항목)이 재점검필요(NG)로 표시돼 있었을 경우
+// 그때 적어둔 메모를 펼쳐서 보여준다 — 재점검이 왜 필요했는지 여기서 바로 확인 가능.
+function buildStatTooltipLines(events, itemFn){
+  const visits = dedupeByGid(events).map(function(e){
+    return {
+      site: (e.site || '').trim() || '현장명 미입력',
+      item: itemFn ? itemFn(e) : null,
+      date: e.date || '', cat: e.cat, needsRecheck: !!e.needsRecheck, note: e.note || ''
+    };
   });
-  return lines.length ? lines.join('\n') : '아직 없음';
+  if(!visits.length) return [];
+  const groups = {}, order = [];
+  visits.forEach(function(v){
+    const key = v.site + '|' + (v.item || '');
+    if(!groups[key]){ groups[key] = []; order.push(key); }
+    groups[key].push(v);
+  });
+  order.sort(function(a,b){ return a.split('|')[0].localeCompare(b.split('|')[0], 'ko') || a.localeCompare(b, 'ko'); });
+  const lines = [];
+  order.forEach(function(key){
+    const list = groups[key].slice().sort(function(a,b){ return (a.date||'').localeCompare(b.date||''); });
+    list.forEach(function(v, idx){
+      let text = v.item ? (v.site + '(' + v.item + ')') : v.site;
+      let ngReason = null;
+      if(idx > 0 && v.cat !== 'iso'){
+        text += ' (재)';
+        const prev = list[idx - 1];
+        if(prev && prev.needsRecheck && prev.note) ngReason = prev.note;
+      }
+      if(v.needsRecheck){
+        text += ' ⚠재점검필요';
+        if(v.note) text += ' — ' + v.note;
+      }
+      lines.push({ text:text, ngReason:ngReason });
+    });
+  });
+  return lines;
+}
+function buildStatTooltip(events, itemFn){
+  const lines = buildStatTooltipLines(events, itemFn);
+  return lines.length ? lines.map(function(l){ return l.text; }).join('\n') : '아직 없음';
 }
 function setStatElTooltip(el, events, itemFn){
   if(!el) return;
-  const text = buildStatTooltip(events, itemFn);
+  const lines = buildStatTooltipLines(events, itemFn);
   const card = el.closest ? el.closest('.stat') : null;
   if(card){
     card.classList.add('has-tooltip');
-    card.dataset.tooltipText = text;
+    card.dataset.tooltipText = lines.length ? lines.map(function(l){ return l.text; }).join('\n') : '아직 없음';
+    card._tooltipLines = lines; // 클릭 시 재점검 사유를 펼쳐 보여주기 위한 구조화된 목록
   }
 }
 let statTooltipOpenCard = null;
 function showStatTooltip(cardEl){
   const box = document.getElementById('stat-tooltip-box');
   if(!box || !cardEl) return;
-  box.textContent = cardEl.dataset.tooltipText || '아직 없음';
+  box.innerHTML = '';
+  const lines = cardEl._tooltipLines;
+  if(lines && lines.length){
+    lines.forEach(function(line){
+      const row = document.createElement('div');
+      row.className = 'stat-tooltip-line' + (line.ngReason ? ' has-ng' : '');
+      row.textContent = line.text;
+      if(line.ngReason){
+        row.title = '클릭하면 이전 재점검필요(NG) 사유를 볼 수 있습니다';
+        row.addEventListener('click', function(ev){
+          ev.stopPropagation();
+          const next = row.nextElementSibling;
+          if(next && next.classList.contains('stat-tooltip-reason')){ next.remove(); return; }
+          const reasonEl = document.createElement('div');
+          reasonEl.className = 'stat-tooltip-reason';
+          reasonEl.textContent = '이전 NG 사유: ' + line.ngReason;
+          row.after(reasonEl);
+        });
+      }
+      box.appendChild(row);
+    });
+  } else {
+    box.textContent = (cardEl.dataset ? cardEl.dataset.tooltipText : '') || '아직 없음';
+  }
   box.hidden = false;
   statTooltipOpenCard = cardEl;
   const rect = cardEl.getBoundingClientRect();
@@ -2181,9 +2239,26 @@ function renderYearStatsCards(events){
     wrap.appendChild(el);
     setStatElTooltip(el.querySelector('.value'), c.evs, c.itemFn);
   });
-  // 재점검필요(NG)는 별도 카드로 안 두고(2026-09-14 사용자 요청: "따로 빼지 말고 점검현황 리스트에서
-  // 표현하는 게 낫다"), 위 각 카드를 클릭했을 때 뜨는 "현장명(점검명)" 목록 자체에 그 건이 NG였으면
-  // "⚠재점검필요 — 메모"가 바로 붙어서 나온다(buildStatTooltip에서 처리, 모든 카드 공통 적용).
+  // 재점검필요(NG)는 각 카드 클릭 목록 안에 "⚠재점검필요 — 메모"로 바로 표시되고(위에서 처리됨),
+  // 그와 별개로 "재점검 집계" 카드를 하나 더 둔다(2026-09-14 사용자 요청) — 단, 새로 세는 게 아니라
+  // 위 "OOOO년 점검현장 총계" 카드를 만들 때 이미 계산해둔 목록(totalCard._tooltipLines) 중 "(재)"가
+  // 붙은 줄만 그대로 뽑아서 보여주는 것이라, 총계/카테고리별 카드 숫자에는 전혀 영향이 없다(중복 집계 없음).
+  const totalLines = totalCard._tooltipLines || [];
+  const recheckLines = totalLines.filter(function(l){ return l.text.indexOf(' (재)') !== -1; });
+  const recheckCard = document.createElement('div');
+  recheckCard.className = 'stat';
+  recheckCard.style.borderLeftColor = '#7A1F1F';
+  recheckCard.style.background = '#FBE7E7';
+  const recheckLabel = document.createElement('div');
+  recheckLabel.className = 'label'; recheckLabel.style.color = '#7A1F1F'; recheckLabel.textContent = '재점검 집계';
+  const recheckValue = document.createElement('div');
+  recheckValue.className = 'value'; recheckValue.id = 'year-stat-recheck';
+  recheckValue.textContent = recheckLines.length + '건';
+  recheckCard.appendChild(recheckLabel); recheckCard.appendChild(recheckValue);
+  wrap.appendChild(recheckCard);
+  recheckCard.classList.add('has-tooltip');
+  recheckCard.dataset.tooltipText = recheckLines.length ? recheckLines.map(function(l){ return l.text; }).join('\n') : '아직 없음';
+  recheckCard._tooltipLines = recheckLines; // 원본 라인 객체를 그대로 재사용 — ngReason(클릭 시 메모)도 동일하게 동작
 }
 function tagItemFnForYearTotal(e){ return e.tag || null; }
 
