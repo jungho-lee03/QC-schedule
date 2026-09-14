@@ -241,6 +241,15 @@
   }
   .event .ng-toggle:hover{ opacity:0.9; background:rgba(0,0,0,0.08); }
   .event .ng-toggle.active{ opacity:1; color:var(--ng-fg); font-weight:700; background:var(--ng-bg); }
+  .event .cat-switch-btn{
+    display:inline-block;
+    margin-right:1px;
+    opacity:0.5;
+    cursor:pointer;
+    user-select:none;
+    font-size:9px;
+  }
+  .event .cat-switch-btn:hover{ opacity:1; }
   .event .site[contenteditable]{ outline:none; display:block; }
   .event .people[contenteditable]{ outline:none; display:block; font-size:10.5px; opacity:0.85; margin-top:1px; }
   .event .people[contenteditable]:empty:before{ content: attr(data-placeholder); opacity:0.55; }
@@ -611,6 +620,7 @@
     .event .recheck-toggle:not(.active){ display:none !important; }
     .event .ng-toggle:not(.active){ display:none !important; }
     .event .recheck-toggle.active{ background:none !important; }
+    .event .cat-switch-btn{ display:none !important; }
     .event{ cursor:default; }
     /* 좌우 여백을 최대한 줄여서 달력이 쓸 수 있는 가로 폭을 넓히고, 그만큼 글씨도 화면보다 키움 */
     .cal-wrap{ padding:calc(3px*var(--print-scale)) 2px calc(4px*var(--print-scale)); overflow:visible; }
@@ -2441,6 +2451,157 @@ async function runExcelImportOnce(){
     console.warn('엑셀 이력 자동 반영 중 오류:', err);
   }
 }
+// ── 2026-09-14 초기점검·M/H 과거 이력 추가 반영(2차) ──────────────────────
+// 정호님이 정리해서 다시 준 표(초기점검/M/H점검, 33건)를 그대로 반영한다. M/H는 이미 처음 엑셀
+// 반영 때 대부분 들어가 있지만(대구우방범어2차재건축만 빠져 있었음), 초기점검은 애초에 그때
+// 반영 대상에서 제외됐던 항목이라 전부 새로 들어가야 한다. 겹치는 건(사이트+분류+날짜가 같으면)
+// 자동으로 건너뛰므로 M/H 것까지 통째로 넣어도 중복 생성되지 않는다.
+// 초기점검은 key가 사용자가 만들 때 자동 생성된 값(catXXXXXXXXXX)이라 코드에 고정으로 적을 수 없어서,
+// 반영 시점에 라벨("초기점검")로 실제 key를 찾아서 사용한다 — 혹시 그 사이 라벨을 바꿨다면 못 찾고
+// 건너뛰므로, 그런 경우 "점검종류 관리"에서 라벨을 다시 "초기점검"으로 맞추면 다음에 열 때 반영된다.
+const EXCEL_IMPORT_DATA2 = [
+  { site:'이문아이파크자이(3-2)', catLabel:'초기점검', date:'2025-01-21' },
+  { site:'강변역센트럴아이파크', catLabel:'초기점검', date:'2025-02-21' },
+  { site:'서산센트럴아이파크', catLabel:'초기점검', date:'2025-03-11' },
+  { site:'창원센트럴아이파크', catLabel:'초기점검', date:'2025-02-25' },
+  { site:'군산레이크시티아이파크', catLabel:'초기점검', date:'2025-03-07' },
+  { site:'익산부송아이파크', catLabel:'초기점검', date:'2025-04-04' },
+  { site:'가경아이파크6단지', catLabel:'초기점검', date:'2025-02-14' },
+  { site:'시티오씨엘7단지', cat:'mh', tag:'M/H', date:'2025-02-06' },
+  { site:'호현센트럴아이파크', cat:'mh', tag:'M/H', date:'2025-02-06' },
+  { site:'곤지암역센트럴아이파크', catLabel:'초기점검', date:'2025-05-27' },
+  { site:'대구우방범어2차재건축', cat:'mh', tag:'M/H', date:'2025-06-04' },
+  { site:'제기1구역 주택재건축정비사업', cat:'mh', tag:'M/H', date:'2025-06-17' },
+  { site:'춘천레이크시티IPARK 2차', cat:'mh', tag:'M/H', date:'2025-08-05' },
+  { site:'천안아이파크시티 2단지', cat:'mh', tag:'M/H', date:'2025-08-14' },
+  { site:'상봉센트럴아이파크', cat:'mh', tag:'M/H', date:'2025-08-20' },
+  { site:'천안아이파크시티', catLabel:'초기점검', date:'2025-08-22' },
+  { site:'울산반구동공동주택', cat:'mh', tag:'M/H', date:'2025-11-27' },
+  { site:'시티오씨엘7단지', catLabel:'초기점검', date:'2025-12-04' },
+  { site:'서울원아이파크(MXD)', catLabel:'초기점검', date:'2025-12-16' },
+  { site:'안양역센트럴아이파크수자인', cat:'mh', tag:'M/H', date:'2025-12-18' },
+  { site:'호현센트럴아이파크', catLabel:'초기점검', date:'2026-01-23' },
+  { site:'제기1구역 주택재건축정비사업', catLabel:'초기점검', date:'2026-01-30' },
+  { site:'천안아이파크시티5단지', cat:'mh', tag:'M/H', date:'2026-02-02' },
+  { site:'천안아이파크시티 2단지', catLabel:'초기점검', date:'2026-02-27' },
+  { site:'의정부역센트럴시티아이파크', cat:'mh', tag:'M/H', date:'2026-03-13' },
+  { site:'춘천레이크시티IPARK 2차', catLabel:'초기점검', date:'2026-04-21' },
+  { site:'현대해상 일산사옥', catLabel:'초기점검', date:'2026-04-30' },
+  { site:'상봉센트럴아이파크', catLabel:'초기점검', date:'2026-05-29' },
+  { site:'서울원상업업무시설(CB)', cat:'mh', tag:'M/H', date:'2026-04-01' },
+  { site:'김해신문센트럴아이파크', cat:'mh', tag:'M/H', date:'2026-06-11' },
+  { site:'울산반구동공동주택', catLabel:'초기점검', date:'2026-06-24' },
+  { site:'춘천리버뷰아이파크', cat:'mh', tag:'M/H', date:'2026-06-29' },
+  { site:'시티오씨엘9단지', cat:'mh', tag:'M/H', date:'2026-08-06' }
+];
+async function runExcelImportOnce2(){
+  let markerRef = null;
+  try{
+    ensureFirebaseApp();
+    markerRef = firebase.database().ref('settings/excelImportDone2');
+    const snap = await markerRef.once('value');
+    if(snap.val()) return; // 이미 반영됨
+  }catch(err){ return; }
+  let added = 0, skippedDup = 0, failed = 0, skippedNoCat = 0;
+  try{
+    await new Promise(function(resolve){ loadMatrixData(resolve); });
+    const chogiKey = catKeyByLabel('초기점검');
+    const rows = EXCEL_IMPORT_DATA2.map(function(row){
+      if(row.cat) return row; // mh처럼 key가 고정된 항목
+      if(!chogiKey) return null; // 초기점검 카테고리가 없거나 라벨이 바뀐 경우
+      return { site:row.site, cat:chogiKey, tag:'초기점검', date:row.date };
+    }).filter(Boolean);
+    skippedNoCat = EXCEL_IMPORT_DATA2.length - rows.length;
+    // 새 현장명이면 현장별 점검 현황에도 바로 잡히도록 마스터 DB에 등록해둔다.
+    rows.forEach(function(row){ autoRegisterSiteIfNew(row.site, row.cat); });
+    const byMonth = {};
+    rows.forEach(function(row){
+      const y = parseInt(row.date.slice(0,4),10), m = parseInt(row.date.slice(5,7),10);
+      const key = stateKeyFor(y, m);
+      (byMonth[key] = byMonth[key] || []).push(row);
+    });
+    for(const stateKey of Object.keys(byMonth)){
+      try{
+        const ctx = await getStateEvents(stateKey);
+        const list = matrixListFor(ctx);
+        byMonth[stateKey].forEach(function(row){
+          const exists = list.some(function(e){
+            return e.cat === row.cat && (e.site || '').trim() === row.site && e.date === row.date;
+          });
+          if(exists){ skippedDup++; return; }
+          list.push(mkEvent('e' + (ctx.idCounter++), 'g' + (ctx.gidCounter++), row.date, row.cat, row.tag, row.site, ''));
+          added++;
+        });
+        await saveStateEvents(ctx);
+      }catch(err){
+        failed += byMonth[stateKey].length;
+      }
+    }
+    matrixRefreshAfterWrite();
+    if(!failed && markerRef) await markerRef.set({ done:true, at:Date.now(), added:added, skippedDup:skippedDup, skippedNoCat:skippedNoCat });
+    console.log('[초기점검·M/H 이력 추가 반영] 추가 ' + added + '건 · 건너뜀(중복) ' + skippedDup + '건' + (skippedNoCat ? (' · 건너뜀(초기점검 카테고리 없음) ' + skippedNoCat + '건') : '') + (failed ? (' · 실패 ' + failed + '건(다음에 다시 시도)') : ''));
+  }catch(err){
+    console.warn('초기점검·M/H 이력 추가 반영 중 오류:', err);
+  }
+}
+// ── 2026-09-14 종합점검 과거 이력 추가 반영(3차) ──────────────────────────
+// 정호님이 정리해서 준 표에는 "Target 중간"이라고 적혀 있지만, 본인이 확인해준 대로 전부 종합점검
+// (cat:'jonghap')으로 취급해서 넣는다. jonghap은 커스텀 카테고리가 아니라 항상 고정된 key라서
+// 초기점검 때처럼 라벨로 찾을 필요 없이 바로 쓴다.
+const EXCEL_IMPORT_DATA3 = [
+  { site:'가경아이파크6단지', date:'2026-03-26' },
+  { site:'대연THE IL', date:'2026-03-31' },
+  { site:'강변역센트럴아이파크', date:'2026-04-06' },
+  { site:'보문센트럴아이파크', date:'2026-04-14' },
+  { site:'강릉오션시티아이파크', date:'2026-04-27' },
+  { site:'광주센테니얼아이파크', date:'2026-05-07' },
+  { site:'군산레이크시티아이파크', date:'2026-05-12' },
+  { site:'익산부송아이파크', date:'2026-05-13' },
+  { site:'서산센트럴아이파크', date:'2026-05-20' }
+];
+async function runExcelImportOnce3(){
+  let markerRef = null;
+  try{
+    ensureFirebaseApp();
+    markerRef = firebase.database().ref('settings/excelImportDone3');
+    const snap = await markerRef.once('value');
+    if(snap.val()) return;
+  }catch(err){ return; }
+  let added = 0, skippedDup = 0, failed = 0;
+  try{
+    await new Promise(function(resolve){ loadMatrixData(resolve); });
+    const rows = EXCEL_IMPORT_DATA3.map(function(row){ return { site:row.site, cat:'jonghap', tag:'종합점검', date:row.date }; });
+    rows.forEach(function(row){ autoRegisterSiteIfNew(row.site, row.cat); });
+    const byMonth = {};
+    rows.forEach(function(row){
+      const y = parseInt(row.date.slice(0,4),10), m = parseInt(row.date.slice(5,7),10);
+      const key = stateKeyFor(y, m);
+      (byMonth[key] = byMonth[key] || []).push(row);
+    });
+    for(const stateKey of Object.keys(byMonth)){
+      try{
+        const ctx = await getStateEvents(stateKey);
+        const list = matrixListFor(ctx);
+        byMonth[stateKey].forEach(function(row){
+          const exists = list.some(function(e){
+            return e.cat === row.cat && (e.site || '').trim() === row.site && e.date === row.date;
+          });
+          if(exists){ skippedDup++; return; }
+          list.push(mkEvent('e' + (ctx.idCounter++), 'g' + (ctx.gidCounter++), row.date, row.cat, row.tag, row.site, ''));
+          added++;
+        });
+        await saveStateEvents(ctx);
+      }catch(err){
+        failed += byMonth[stateKey].length;
+      }
+    }
+    matrixRefreshAfterWrite();
+    if(!failed && markerRef) await markerRef.set({ done:true, at:Date.now(), added:added, skippedDup:skippedDup });
+    console.log('[종합점검 이력 추가 반영] 추가 ' + added + '건 · 건너뜀(중복) ' + skippedDup + '건' + (failed ? (' · 실패 ' + failed + '건(다음에 다시 시도)') : ''));
+  }catch(err){
+    console.warn('종합점검 이력 추가 반영 중 오류:', err);
+  }
+}
 // 예전에 TARGET(건축) 하위분류로 잘못 끼워둔 "건축종합"이 남아있으면 정리한다.
 // (이제 종합점검은 별도 점검종류로만 존재하고, 매트릭스의 "건축종합" 칸은 그 실제 일정과 연동된다.)
 function removeBuildingComprehensiveClassIfPresent(){
@@ -3237,6 +3398,48 @@ function openPicker(btn, dateKey){
   setTimeout(()=>{ document.addEventListener('click', closeAnyPicker, { once:true }); },0);
 }
 
+// 일정을 다 등록한 뒤에도 "점검명"(카테고리) 자체를 바꿀 수 있게 해준다 — 지금까지는 태그 문구만
+// 고칠 수 있고, 어떤 종류(M/H·초기점검·TARGET 등)인지는 처음 만들 때 고른 대로 고정이었다.
+// 카테고리를 바꾸면 새 카테고리 기준으로 태그/세부항목을 addEvent와 똑같은 기본값으로 다시 잡아준다
+// (예전 카테고리의 discipline/className/isoType/subName 같은 값이 남아있으면 안 맞으므로 지운다).
+function openCatChangePicker(box, seg){
+  closeAnyPicker();
+  const picker = document.createElement('div');
+  picker.className = 'picker';
+  pickerCatKeys().filter(function(k){ return k !== 'holiday'; }).forEach(function(catKey){
+    const c = CATS[catKey];
+    if(!c) return;
+    const b = document.createElement('button');
+    b.innerHTML = '<span class="swatch" style="background:'+c.colorBg+'; border:1.5px solid '+c.colorFg+';"></span>' + (c.label || catKey);
+    if(catKey === seg.sample.cat){ b.disabled = true; b.style.opacity = '0.4'; }
+    b.onclick = function(e){ e.stopPropagation(); changeEventCategory(seg, catKey); closeAnyPicker(); };
+    picker.appendChild(b);
+  });
+  box.appendChild(picker);
+  picker.style.top = '20px';
+  picker.style.left = '4px';
+  setTimeout(function(){ document.addEventListener('click', closeAnyPicker, { once:true }); },0);
+}
+function changeEventCategory(seg, newCatKey){
+  if(newCatKey === seg.sample.cat) return;
+  const c = CATS[newCatKey];
+  if(!c) return;
+  let tag = c.label;
+  let extra = {};
+  if(newCatKey === 'target'){ tag = 'TARGET'; extra = { discipline:null, className:null }; }
+  else if(newCatKey === 'iso'){ tag = 'ISO:정기'; extra = { isoType:'정기' }; }
+  else if(c.hasSubclass){ extra = c.grouped ? { subGroup:null, subName:null } : { subName:null }; }
+  const clearedFields = ['discipline','className','isoType','subName','subGroup'];
+  seg.ids.forEach(function(id){
+    const ev = EVENTS.find(function(x){ return x.id === id; });
+    if(!ev) return;
+    clearedFields.forEach(function(f){ delete ev[f]; });
+    ev.cat = newCatKey;
+    ev.tag = tag;
+    Object.assign(ev, extra);
+  });
+  renderAndSave();
+}
 function addEvent(dateKey, catKey){
   if(pendingMatrixFill && (pendingMatrixFill.col.catFor ? pendingMatrixFill.col.catFor(pendingMatrixFill.item) : pendingMatrixFill.col.cat) === catKey){
     const fill = pendingMatrixFill;
@@ -3361,6 +3564,15 @@ function buildEventEl(seg){
   } else {
     const tagWrap = document.createElement('div');
     tagWrap.className = 'tag';
+    const catSwitchBtn = document.createElement('span');
+    catSwitchBtn.className = 'cat-switch-btn';
+    catSwitchBtn.textContent = '▾';
+    catSwitchBtn.title = '점검명(분류) 변경';
+    catSwitchBtn.draggable = false;
+    catSwitchBtn.addEventListener('mousedown', (ev)=>{ ev.stopPropagation(); });
+    catSwitchBtn.addEventListener('dragstart', (ev)=>{ ev.preventDefault(); ev.stopPropagation(); });
+    catSwitchBtn.addEventListener('click', (ev)=>{ ev.stopPropagation(); openCatChangePicker(box, seg); });
+    tagWrap.appendChild(catSwitchBtn);
     tagWrap.appendChild(document.createTextNode('['));
     const isClsDriven = (catKey === 'target' || catKey === 'iso' || !!c.hasSubclass);
     const tagText = document.createElement('span');
@@ -4634,6 +4846,8 @@ initResetPasswordSync();
 initTargetClassesSync();
 initSitesSync();
 runExcelImportOnce();
+runExcelImportOnce2();
+runExcelImportOnce3();
 initInspectorsSync();
 initNoticeSync();
 initCategoryConfigSync();
