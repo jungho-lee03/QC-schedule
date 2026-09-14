@@ -71,6 +71,7 @@
      (드래그로 스크롤하지 않도록 JS가 계산한 scale을 곱해서 화면 안에 전체가 들어오게 함) */
   body.force-landscape{ overflow:hidden; }
   #landscape-stage{ display:contents; }
+  #landscape-viewport{ display:contents; }
   #landscape-content{ display:contents; }
   body.force-landscape #landscape-stage{
     display:flex; align-items:stretch; justify-content:center;
@@ -79,19 +80,27 @@
   /* 2026-09-14: 예전엔 툴바까지 통째로(#sheet 전체) 회전+축소해서, 화면이 넓지 않은 표를 억지로
      욱여넣다 보니 버튼들이 손톱만큼 작아져서 실제로는 눌리지 않는 문제가 있었다("버튼 자체가
      안 눌림"). 이제 툴바는 회전/축소 대상에서 완전히 빼서 화면 위쪽에 원래 크기 그대로(좁은
-     화면이면 평소처럼 줄바꿈되어) 항상 정상적으로 누를 수 있게 두고, 달력 부분만 담은
-     #landscape-content만 따로 회전+축소한다. #landscape-content의 너비/높이는 JS
-     (applyForceLandscapeFit)가 "화면 전체에서 툴바가 차지한 높이를 뺀 나머지"로 직접 픽셀
-     지정해주므로, transform-origin:center center 만으로 항상 그 남는 공간의 정중앙에 맞게
-     회전+축소된 결과가 놓인다(내용 자체 크기에 좌우되지 않음). */
+     화면이면 평소처럼 줄바꿈되어) 항상 정상적으로 누를 수 있게 두고, 달력 부분만 회전+축소한다.
+     2026-09-14 재수정: #landscape-content에 화면 크기(vw/vh)를 직접 강제로 지정했더니, 회전 전에
+     원래 넓은 표(달력)가 좁은 화면 폭에 맞춰 억지로 눌려서(레이아웃 자체가 찌그러짐) 실제 기기에서
+     내용이 한쪽 구석에 작게 뭉쳐 나오는 문제가 있었다(팀장님 실기기 캡처로 확인). 그래서 원래
+     (툴바 분리 이전에 잘 동작하던) 방식으로 되돌린다 — #landscape-content는 폭을 강제하지 않고
+     "원래 크기 그대로" 자연스럽게 레이아웃되게 두고(display:block, 크기 지정 없음), 그 바깥을
+     감싸는 #landscape-viewport(툴바 아래 남는 공간 전체, flex로 가운데 정렬)가 가운데에 배치해준
+     뒤, #landscape-content에는 회전+축소 transform만 적용한다. transform은 레이아웃 흐름에 영향을
+     주지 않으므로(찌그러짐 없이) 원래 크기로 렌더링된 내용을 그대로 축소해서 보여줄 수 있다. */
   body.force-landscape #sheet{
     margin:0; max-width:none; flex:none;
     display:flex; flex-direction:column; align-items:stretch;
     width:100vw; height:100vh; overflow:hidden;
   }
   body.force-landscape #sheet > .toolbar{ flex:none; }
+  body.force-landscape #landscape-viewport{
+    display:flex; flex:1 1 auto; min-height:0; min-width:0;
+    align-items:center; justify-content:center; overflow:hidden;
+  }
   body.force-landscape #landscape-content{
-    display:block; overflow:hidden; transform-origin:center center;
+    display:block; flex:none; overflow:visible; transform-origin:center center;
   }
   .toolbar button{
     font-family:inherit;
@@ -780,6 +789,7 @@
     </div>
   </div>
 
+  <div class="landscape-viewport" id="landscape-viewport">
   <div class="landscape-content" id="landscape-content">
   <header class="doc">
     <div class="row1">
@@ -829,6 +839,7 @@
     <div class="note" id="footer-note" contenteditable="true"></div>
     <div class="footer-watermark" id="footer-watermark">품질팀 이정호M</div>
   </footer>
+  </div>
   </div>
 </div>
 </div>
@@ -5364,20 +5375,22 @@ const LANDSCAPE_PREF_KEY = 'qsched-force-landscape';
 // 가로보기: 화면을 90도 돌리고, 잘려서 드래그로 봐야 하는 일이 없도록 화면에 꽉 차게 축소(scale)해서 한 번에 다 보여줌.
 function applyForceLandscapeFit(){
   const sheet = document.getElementById('sheet');
+  const viewport = document.getElementById('landscape-viewport');
   const content = document.getElementById('landscape-content');
   const toolbar = sheet ? sheet.querySelector('.toolbar') : null;
-  if(!sheet || !content) return;
+  if(!sheet || !viewport || !content) return;
   if(!document.body.classList.contains('force-landscape')){
     content.style.transform = '';
-    content.style.width = '';
-    content.style.height = '';
     return;
   }
-  // 툴바는 회전/축소 대상에서 제외하고, 나머지 콘텐츠만 회전+축소해서
-  // 툴바 버튼이 원래 크기(터치 가능한 크기)를 유지하도록 함
+  // 툴바는 회전/축소 대상에서 제외하고 원래 크기 그대로 두어 버튼이 항상 정상적으로 눌리게 하고,
+  // 콘텐츠(#landscape-content)는 강제로 폭/높이를 지정하지 않고 "원래 크기 그대로" 자연스럽게
+  // 레이아웃되게 둔 채로, transform(회전+축소)만 적용한다 — 레이아웃 자체를 좁은 화면 폭에 맞춰
+  // 찌그러뜨리면 실기기에서 표가 한쪽에 작게 뭉쳐 보이는 문제가 있었기 때문에, 레이아웃은 건드리지
+  // 않고 순수 시각적 transform으로만 축소한다. 감싸는 #landscape-viewport가 툴바 아래 남는 공간
+  // 전체를 차지하며 flex로 가운데 정렬해주므로, transform-origin:center center와 결합하면 축소된
+  // 결과가 항상 그 남는 공간 정중앙에 놓인다.
   content.style.transform = 'none';
-  content.style.width = '';
-  content.style.height = '';
   void content.offsetHeight;
   const contentW = content.scrollWidth;
   const contentH = content.scrollHeight;
@@ -5385,8 +5398,6 @@ function applyForceLandscapeFit(){
   const vw = window.innerWidth;
   const vh = window.innerHeight - toolbarH;
   if(!contentW || !contentH || vh <= 0) return;
-  content.style.width = vw + 'px';
-  content.style.height = vh + 'px';
   // 90도 회전하면 화면의 가로/세로가 콘텐츠의 세로/가로에 대응하므로 그 기준으로 맞춤 배율을 계산
   const scale = Math.min(vw / contentH, vh / contentW) * 0.98;
   content.style.transform = 'rotate(90deg) scale(' + scale + ')';
