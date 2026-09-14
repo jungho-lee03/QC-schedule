@@ -2902,10 +2902,22 @@ function loadMatrixData(cb){
 }
 function matrixMatchesFor(siteName, col, item){
   if(!matrixDataCache) return [];
-  const matches = matrixDataCache.filter(function(e){
+  const rawMatches = matrixDataCache.filter(function(e){
     if((e.site || '').trim() !== siteName) return false;
     return col.match(e, item);
   });
+  // 같은 gid(Ctrl+드래그로 만든 다일/多日 점검 — 예: 9/10~11일 하루씩 이어지는 한 번의 방문)는
+  // 원래 건축(TARGET) 쪽에서 "마지막 날짜 하나만 현장명 리스트/이력에 기록"하는 규칙으로 써왔다
+  // (2026-09-14 사용자 확인: "건축도 맨 마지막날 기준으로 넣기로 했잖아"). 이전에는 인프라(적기점검
+  // 등)만 세부분류 매칭 방식 차이 때문에 우연히 날짜별로 다 따로 잡혀서 두 쪽이 서로 다르게
+  // 보였는데, 이제 전체적으로 "같은 gid는 마지막 날짜 하나만" 규칙으로 통일한다 — 즉 이력에는
+  // gid 하나당 1건(그 안에서 가장 늦은 날짜)만 남는다.
+  const byGid = {};
+  rawMatches.forEach(function(m){
+    const key = m.gid || ('__id_' + m.id);
+    if(!byGid[key] || (m.date||'') > (byGid[key].date||'')) byGid[key] = m;
+  });
+  const matches = Object.keys(byGid).map(function(key){ return byGid[key]; });
   matches.sort(function(a,b){ return (a.date||'').localeCompare(b.date||''); });
   return matches;
 }
