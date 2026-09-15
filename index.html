@@ -572,7 +572,7 @@
   .cls-manage-item select{ font-family:inherit; font-size:11.5px; border:1px solid var(--line); border-radius:6px; padding:3px 4px; }
   .cls-manage-item .cls-manage-del{ border:none; background:transparent; color:var(--sun); cursor:pointer; font-size:13px; padding:2px 6px; }
   .cls-add-row{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:6px; }
-  .cls-add-row input[type="text"]{ flex:1; min-width:110px; font-family:inherit; font-size:12.5px; padding:5px 8px; border:1px solid var(--line); border-radius:6px; }
+  .cls-add-row input[type="text"], .cls-add-row input[type="month"]{ flex:1; min-width:110px; font-family:inherit; font-size:12.5px; padding:5px 8px; border:1px solid var(--line); border-radius:6px; }
   .cls-add-row label{ font-size:11.5px; color:var(--muted); display:flex; align-items:center; gap:3px; }
   .cls-add-row button{ font-family:inherit; font-size:12px; padding:5px 10px; border-radius:6px; border:1px solid var(--navy); background:var(--navy); color:#fff; cursor:pointer; }
   .cls-iso-options{ display:flex; gap:10px; justify-content:center; padding:10px 0; flex-wrap:wrap; }
@@ -635,6 +635,13 @@
   .matrix-table th.mx-site-h{ text-align:left; position:sticky; left:0; top:0; z-index:3; }
   .matrix-table td.mx-info{ color:var(--muted); font-size:10px; }
   .matrix-table td.mx-info[contenteditable]:focus{ text-decoration:underline dotted var(--muted); overflow:visible; }
+  .mx-due-input{
+    font-family:inherit; font-size:10px; color:var(--muted); background:transparent;
+    border:none; outline:none; width:100%; padding:0; cursor:pointer;
+  }
+  .mx-due-input:focus{ text-decoration:underline dotted var(--muted); }
+  .mx-due-input:disabled{ color:var(--muted); opacity:0.85; cursor:default; }
+  @media print{ .mx-due-input{ -webkit-appearance:none; appearance:none; } }
   .matrix-table td.mx-move-btn{ font-size:9px; color:var(--muted); cursor:pointer; text-decoration:underline; padding-left:4px; }
   .matrix-table .mx-del-btn{ color:var(--sun); cursor:pointer; font-weight:700; padding:0 3px; float:right; }
   .matrix-table td.mx-site{ display:flex; align-items:center; justify-content:space-between; gap:4px; }
@@ -1053,7 +1060,7 @@
       </div>
       <div class="cls-add-row" id="site-add-row-arch">
         <input type="text" id="site-add-name-arch" placeholder="현장명">
-        <input type="text" id="site-add-due-arch" placeholder="준공예정 (예: 2026-08-20)">
+        <input type="month" id="site-add-due-arch" placeholder="준공예정(년-월)">
         <input type="text" id="site-add-manager-arch" placeholder="현장소장">
         <button type="button" id="site-add-btn-arch">건축 현장 추가</button>
       </div>
@@ -1066,7 +1073,7 @@
       </div>
       <div class="cls-add-row" id="site-add-row-infra">
         <input type="text" id="site-add-name-infra" placeholder="현장명">
-        <input type="text" id="site-add-due-infra" placeholder="준공예정 (예: 2026-08-20)">
+        <input type="month" id="site-add-due-infra" placeholder="준공예정(년-월)">
         <input type="text" id="site-add-manager-infra" placeholder="현장소장">
         <button type="button" id="site-add-btn-infra">인프라 현장 추가</button>
       </div>
@@ -3509,9 +3516,33 @@ function renderMatrixFilter(){
     el.appendChild(label);
   });
 }
+// "YYYY-MM-DD"처럼 예전에 전체 날짜로 저장된 값도 <input type="month">에 넣을 수 있게
+// 앞 7자리(YYYY-MM)만 잘라서 돌려준다. 형식이 안 맞으면 빈 값으로 처리.
+function toMonthInputValue(due){
+  const m = String(due || '').trim().match(/^(\d{4})-(\d{2})/);
+  return m ? (m[1] + '-' + m[2]) : '';
+}
 function buildEditableInfoTd(site, idx, field, onDelete){
   const td = document.createElement('td');
   td.className = field === 'name' ? 'mx-site' : 'mx-info';
+  if(field === 'due'){
+    // 2026-09-15: "준공예정일을 년-월까지만 입력하고 싶다"는 요청 — 자유 입력 대신 연/월만
+    // 고를 수 있는 브라우저 기본 달력 선택기(input type=month)를 쓴다. 편집모드가 꺼져 있으면
+    // 다른 칸들과 마찬가지로 수정할 수 없도록 잠근다.
+    const input = document.createElement('input');
+    input.type = 'month';
+    input.className = 'mx-due-input';
+    input.value = toMonthInputValue(site.due);
+    input.disabled = !editModeOn;
+    input.addEventListener('change', function(){
+      const sites = getSites().slice();
+      if(!sites[idx]) return;
+      sites[idx] = Object.assign({}, sites[idx], { due: input.value });
+      setSites(sites);
+    });
+    td.appendChild(input);
+    return td;
+  }
   const editEl = field === 'name' ? document.createElement('span') : td;
   if(field === 'name') editEl.className = 'mx-site-name-text';
   editEl.contentEditable = editModeOn ? 'true' : 'false';
