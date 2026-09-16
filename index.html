@@ -641,7 +641,12 @@
   }
   .mx-due-input:focus{ text-decoration:underline dotted var(--muted); }
   .mx-due-input:disabled{ color:var(--muted); opacity:0.85; cursor:default; }
-  @media print{ .mx-due-input{ -webkit-appearance:none; appearance:none; } }
+  @media print{
+    .mx-due-input{ -webkit-appearance:none; appearance:none; }
+    /* 값이 없는 준공예정일은 브라우저가 그리는 "----년 --월" 자리표시자를 인쇄에서는 안 보이게
+       투명 처리 — 화면에서는 그대로 보임(위 mx-due-empty 클래스는 인쇄 시에만 적용). */
+    .mx-due-input.mx-due-empty{ color:transparent; }
+  }
   .matrix-table td.mx-move-btn{ font-size:9px; color:var(--muted); cursor:pointer; text-decoration:underline; padding-left:4px; }
   .matrix-table .mx-del-btn{ color:var(--sun); cursor:pointer; font-weight:700; padding:0 3px; float:right; }
   .matrix-table td.mx-site{ display:flex; align-items:center; justify-content:space-between; gap:4px; }
@@ -842,9 +847,39 @@
     body.printing-sites .matrix-print-section{ page-break-after:always; break-after:page; }
     body.printing-sites .matrix-print-section:last-of-type{ page-break-after:auto; break-after:auto; }
     body.printing-sites .matrix-section-title{ font-size:17px; margin:0 0 8px; }
-    body.printing-sites .matrix-scroll{ max-height:none; overflow:visible; border:none; }
+    body.printing-sites .matrix-scroll{ max-height:none; border:none; }
     body.printing-sites .matrix-table{ font-size:12px; }
+    /* 인쇄에는 스크롤이 없어 sticky(제목행 고정/현장명 칸 고정)가 필요 없을 뿐 아니라, 표를
+       transform:scale()로 통째로 줄이는(아래 fitMatrixTablesForPrint) 도중 overflow:hidden +
+       sticky가 겹치면 행 위치 계산이 어긋나는 걸 실측으로 확인했다 — 인쇄에서는 꺼둔다. */
+    body.printing-sites .matrix-table th,
+    body.printing-sites .matrix-table td.mx-site{ position:static; }
     body.printing-sites .matrix-table td.mx-del-btn{ display:none !important; }
+    /* 2026-09-16: "건축표는 기계 칸부터 잘리고 인프라표는 여백이 많이 남는다, 용지 맞춤으로 뽑을 수
+       없냐"는 지적. 처음엔 <col> 너비를 배율만큼 다시 계산해서 넣는 방식으로 시도했는데, 이 표는
+       머리글이 3단(상위 그룹/하위 그룹/세부항목)으로 겹쳐 있어서 브라우저가 table-layout:fixed를
+       지정해도 실제로는 각 칸을 내용(헤더 글자 수)에 맞춰 제멋대로 다시 계산해버리는 걸 확인했다(예:
+       "현장명" 칸에 걸어둔 flex 때문만이 아니라 브라우저 자체 렌더링 특성) — 그래서 칸 너비를
+       맞추는 방식은 포기하고, 표 전체를 통째로 확대/축소(transform:scale)하는 방식으로 바꿨다. 표가
+       실제로 차지하는 폭(자연스러운 렌더링 폭)을 재서 인쇄 가능 폭과 비교한 배율만큼 표 전체를
+       그대로 줄이거나(건축) 늘리고(인프라), 표를 담은 .matrix-scroll 박스도 그만큼 줄어든/늘어난
+       크기로 딱 맞춰서, 다음 페이지로 넘어가는 여백 계산도 어긋나지 않게 한다. (fitMatrixTablesForPrint
+       참고 — transform은 실제 페이지에 그려지는 모습(칠해지는 픽셀)에는 그대로 반영되므로, 표 폭을
+       페이지 인쇄 가능 폭 안에 정확히 넣을 수 있다.) */
+    body.printing-sites .matrix-scroll{ transform-origin:top left; }
+    /* 2026-09-16(3차): 인프라표는 위 transform 자동 맞춤을 쓰지 않고(칸이 적어 확대하면 오히려
+       잘리는 문제가 있어서, 바로 위 fitMatrixTablesForPrint에서 arch만 대상으로 하도록 바꿈)
+       원래 크기 그대로 두는 대신, 준공예정일/현장소장 글씨는 좀 더 크게, 현장명과 점검별 날짜 값
+       글씨는 조금 작게 직접 조정한다. */
+    body.printing-sites #matrix-table-infra td.mx-info{ font-size:13px; }
+    body.printing-sites #matrix-table-infra td.mx-site{ font-size:11px; }
+    body.printing-sites #matrix-table-infra td.mx-cell{ font-size:11px; }
+    /* 2026-09-16(4차): "인프라는 A4 가로 폭 전체를 꽉 채우는 게 맞다, 지금은 보고 자료로 쓰기엔
+       너무 짜부러져 있다"는 지적 — 글씨 크기는 그대로 두고(더 키우면 오히려 부담) 칸 너비만 넓혀서
+       표 전체가 인쇄 가능 폭을 채우게 한다. table-layout:fixed(칸마다 고정 px)를 auto로 바꾸고 표
+       자체에 인쇄 가능 폭을 그대로 지정하면, 브라우저가 각 칸의 내용 비율에 맞춰 남는 폭을 자동으로
+       나눠준다(짧은 칸은 조금, 긴 칸은 더 많이 — 특정 칸만 억지로 늘어나 보이지 않음). */
+    body.printing-sites #matrix-table-infra{ table-layout:auto; width:279mm; }
   }
 </style>
 </head>
@@ -3533,8 +3568,14 @@ function buildEditableInfoTd(site, idx, field, onDelete){
     input.type = 'month';
     input.className = 'mx-due-input';
     input.value = toMonthInputValue(site.due);
+    // 2026-09-16: 준공예정일이 비어 있으면 <input type="month">가 브라우저 기본 표시로
+    // "----년 --월"(연/월 자리 표시자)을 그려서, 인쇄물에는 마치 잘못 입력된 날짜처럼 보였다.
+    // 값이 비어 있을 때만 표시(글자색)를 투명하게 해서 인쇄에서는 그냥 빈 칸으로 보이게 한다
+    // (화면에서는 그대로 회색 자리표시자로 보여서 "클릭해서 입력하세요" 느낌을 유지).
+    if(!input.value) input.classList.add('mx-due-empty');
     input.disabled = !editModeOn;
     input.addEventListener('change', function(){
+      input.classList.toggle('mx-due-empty', !input.value);
       const sites = getSites().slice();
       if(!sites[idx]) return;
       sites[idx] = Object.assign({}, sites[idx], { due: input.value });
@@ -5571,12 +5612,80 @@ document.getElementById('matrix-refresh-btn').addEventListener('click', function
   document.getElementById('matrix-status').textContent = '불러오는 중…';
   loadMatrixData(renderSiteMatrix);
 });
+// 2026-09-16: 건축/인프라 표를 인쇄 가능 폭(A4 가로, 여백 2mm*2)에 정확히 맞춘다 — 건축처럼 표가
+// 넘치면 줄이고, 인프라처럼 표가 좁아 여백이 남으면 늘린다.
+// 2026-09-16(2차): 처음엔 <col> 너비를 배율만큼 다시 계산해서 넣는 방식으로 했는데, 이 표는 머리글이
+// 3단(TARGET점검 > 건축/기계/전기 > 골조1차/골조2차/...)으로 겹쳐 있어서, table-layout:fixed를
+// 지정해도 실제 렌더링은 각 칸을 헤더 글자 수 등 내용에 맞춰 제멋대로 재계산해버리는 걸 실제로
+// 확인했다(예를 들어 짧은 라벨의 칸은 더 좁게, 긴 라벨의 칸은 더 넓게 — <col>에 62px을 넣어도
+// 무시됨). 그래서 칸 너비를 하나씩 맞추는 방식은 포기하고, 표 전체를 하나의 그림처럼 통째로
+// transform:scale()로 줄이거나 늘리는 방식으로 바꿨다 — 표가 실제로 차지하는 폭(자연스럽게
+// 렌더링된 폭, 브라우저가 내부적으로 어떻게 계산했든 상관없이 최종 결과)을 그대로 재서 인쇄 가능
+// 폭과 비교한 뒤 그 비율만큼 표 자체를 그리고, 표를 담은 박스(.matrix-scroll)도 같은 비율로 줄어든/
+// 늘어난 크기에 맞춰서 다음 섹션(인프라)이나 페이지 나누기가 밀리지 않게 한다. transform은 실제
+// 인쇄에 그려지는 모습(칠해지는 픽셀)에 그대로 반영되므로, 표가 몇 칸이든 항상 정확히 인쇄 가능 폭
+// 안에 들어간다.
+function fitMatrixTablesForPrint(){
+  const MM_TO_PX = 96 / 25.4;
+  // #site-modal-overlay .cls-modal 자체도 인쇄용 padding:6mm(좌우 합 12mm)를 갖고 있어서, 표가 쓸 수
+  // 있는 실제 폭은 "@page sitesheet 여백(2mm*2)"만 뺀 것보다 더 좁다. 표 테두리 등을 위한 약간의
+  // 여유(2mm)도 함께 뺀다.
+  const usableMm = 297 - 2 * 2 - 6 * 2 - 2; // 페이지여백 2mm*2 + 모달 padding 6mm*2 + 안전여유 2mm
+  const usablePx = usableMm * MM_TO_PX;
+  // 2026-09-16(3차): "건축은 지금이 딱 좋은데, 인프라는 오히려 잘린다"는 지적 — 인프라는 원래
+  // 칸이 적어서 배율을 크게(최대 2.4배) 키우다 보니 그만큼 확대된 글씨/셀이 오히려 인쇄 가능 폭을
+  // 넘겨버리는 경우가 생겼다. 인프라표는 확대가 필요할 만큼 칸이 많지 않으므로, 이 자동 맞춤은
+  // 건축표에만 적용하고 인프라표는 원래(이 기능 적용 전) 크기로 되돌린 뒤, 대신 아래 CSS에서
+  // 준공예정일/현장소장 글씨는 키우고 현장명/점검 날짜 글씨는 살짝 줄이는 걸로 직접 조정한다.
+  ['arch'].forEach(function(scope){
+    const wrap = document.getElementById('matrix-scroll-' + scope);
+    const table = document.getElementById('matrix-table-' + scope);
+    if(!wrap || !table) return;
+    // 이전에 적용해둔 배율이 있으면(예: 새로고침 없이 다시 인쇄) 먼저 원래 크기로 되돌리고 다시 잰다.
+    table.style.transform = '';
+    wrap.style.height = '';
+    const rect = table.getBoundingClientRect();
+    if(!rect.width) return;
+    let scale = usablePx / rect.width;
+    // 상한(2.4)은 칸이 적은 표(인프라)의 글씨가 지나치게 커지는 걸 막기 위함이고, 하한은 "절대 잘리지
+    // 않는 것"이 최우선이라 실질적으로 거의 걸리지 않을 만큼 낮게(0.2) 둔다.
+    scale = Math.max(0.2, Math.min(scale, 2.4));
+    table.style.transformOrigin = 'top left';
+    table.style.transform = 'scale(' + scale + ')';
+    // 주의: wrap(.matrix-scroll)의 가로 폭은 절대 좁히지 않는다 — 폭을 좁히면 브라우저가 표를 그
+    // 좁아진 폭에 맞춰 다시 배치(reflow)해버려서, 이미 계산해둔 배율의 기준이었던 "원래 폭" 자체가
+    // 바뀌어 버리고(실측으로 확인됨) 이중으로 줄어드는 문제가 생긴다. 가로로 남는 공백은 어차피
+    // 인쇄 가능 폭(위 usablePx) 바깥이라 종이에는 찍히지 않으므로 그대로 둬도 무방하다 — 세로만
+    // 줄어든/늘어난 만큼 wrap 높이를 맞춰서, 다음 섹션이 그 빈 공간만큼 밀리지 않게 한다.
+    wrap.style.height = (rect.height * scale) + 'px';
+    wrap.style.overflow = 'hidden';
+  });
+}
+function resetMatrixTablesAfterPrint(){
+  ['arch','infra'].forEach(function(scope){
+    const wrap = document.getElementById('matrix-scroll-' + scope);
+    const table = document.getElementById('matrix-table-' + scope);
+    if(table){ table.style.transform = ''; table.style.transformOrigin = ''; }
+    if(wrap){ wrap.style.height = ''; wrap.style.overflow = ''; }
+  });
+}
 document.getElementById('matrix-print-btn').addEventListener('click', function(){
   document.body.classList.add('printing-sites');
   window.print();
 });
+// 2026-09-16(3차): fitMatrixTablesForPrint()를 window.print() 호출 "직전"(클릭 핸들러 안)에서
+// 실행했더니, 그 시점엔 아직 브라우저가 @media print 스타일을 적용하기 전이라(진짜 인쇄용
+// 글씨크기 12px·sticky 해제 등이 반영 안 된 화면 상태) 표 크기를 화면 기준으로 잘못 재서 배율이
+// 어긋나고, 그 결과 실제 인쇄에서는 마지막 줄이 표 상자 밖으로 밀려 안 보이는 문제가 있었다.
+// 달력 인쇄(fitSheetForPrint)와 동일하게 'beforeprint' 이벤트(브라우저가 실제로 인쇄 렌더링을
+// 시작하기 직전, @media print가 이미 적용된 시점)에서 실행해야 정확한 인쇄 크기를 기준으로 배율이
+// 계산된다.
+window.addEventListener('beforeprint', function(){
+  if(document.body.classList.contains('printing-sites')) fitMatrixTablesForPrint();
+});
 window.addEventListener('afterprint', function(){
   document.body.classList.remove('printing-sites');
+  resetMatrixTablesAfterPrint();
 });
 document.querySelectorAll('#matrix-period input[name="matrix-period-mode"]').forEach(function(radio){
   radio.addEventListener('change', function(){
